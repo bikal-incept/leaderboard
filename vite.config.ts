@@ -1,0 +1,207 @@
+import { defineConfig, type Plugin } from 'vite';
+import react from '@vitejs/plugin-react';
+import { LEADERBOARD_MV_1_5_4, EXPERIMENT_REPORT, EXPERIMENT_SUMMARY, EXPERIMENT_SCORES, FETCH_EVALUATIONS } from './services/queries';
+import { query } from './services/db';
+
+/**
+ * Lightweight dev-time API for `/api/leaderboard`, `/api/experiment-report`, and `/api/experiment-summary`.
+ *
+ * Vite runs this plugin in a Node environment, so we can safely talk to
+ * Postgres using the shared `services/db` helper and the SQL defined in
+ * `services/queries`.
+ */
+const apiPlugin = (): Plugin => ({
+  name: 'api-plugin',
+  configureServer(server) {
+    server.middlewares.use(async (req, res, next) => {
+      // Only handle API routes
+      if (!req.url?.startsWith('/api/')) {
+        return next();
+      }
+
+      if (req.method !== 'GET') {
+        res.statusCode = 405;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ error: 'Method not allowed' }));
+        return;
+      }
+
+      try {
+        const url = new URL(req.url, 'http://localhost');
+
+        // Handle /api/leaderboard
+        if (req.url.startsWith('/api/leaderboard')) {
+          const subject = (url.searchParams.get('subject') ?? 'math').toLowerCase();
+          const gradeLevel = url.searchParams.get('grade_level') || null;
+          const questionType = url.searchParams.get('question_type') || null;
+          const minTotalQuestions = url.searchParams.get('min_total_questions');
+          const minTotalQuestionsInt = minTotalQuestions ? parseInt(minTotalQuestions, 10) : null;
+
+          // Using the fast materialized view for evaluator version 1.5.4
+          // Parameters: subject, grade_level, question_type, min_total_questions
+          const { rows } = await query(LEADERBOARD_MV_1_5_4, [
+            subject,
+            gradeLevel,
+            questionType,
+            minTotalQuestionsInt
+          ]);
+
+          res.statusCode = 200;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify(rows));
+          return;
+        }
+
+        // Handle /api/experiment-report
+        if (req.url.startsWith('/api/experiment-report')) {
+          const experimentTracker = url.searchParams.get('experiment_tracker');
+          
+          if (!experimentTracker) {
+            res.statusCode = 400;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ error: 'experiment_tracker parameter is required' }));
+            return;
+          }
+
+          const subject = url.searchParams.get('subject') || null;
+          const gradeLevel = url.searchParams.get('grade_level') || null;
+          const questionType = url.searchParams.get('question_type') || null;
+
+          // Execute EXPERIMENT_REPORT query
+          // Parameters: experiment_tracker, subject, grade_level, question_type
+          const { rows } = await query(EXPERIMENT_REPORT, [
+            experimentTracker,
+            subject,
+            gradeLevel,
+            questionType
+          ]);
+
+          res.statusCode = 200;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify(rows));
+          return;
+        }
+
+        // Handle /api/experiment-summary
+        if (req.url.startsWith('/api/experiment-summary')) {
+          const experimentTracker = url.searchParams.get('experiment_tracker');
+          
+          if (!experimentTracker) {
+            res.statusCode = 400;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ error: 'experiment_tracker parameter is required' }));
+            return;
+          }
+
+          const subject = url.searchParams.get('subject') || null;
+          const gradeLevel = url.searchParams.get('grade_level') || null;
+          const questionType = url.searchParams.get('question_type') || null;
+
+          // Execute EXPERIMENT_SUMMARY query
+          // Parameters: experiment_tracker, subject, grade_level, question_type
+          const { rows } = await query(EXPERIMENT_SUMMARY, [
+            experimentTracker,
+            subject,
+            gradeLevel,
+            questionType
+          ]);
+
+          res.statusCode = 200;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify(rows.length > 0 ? rows[0] : null));
+          return;
+        }
+
+        // Handle /api/experiment-scores
+        if (req.url.startsWith('/api/experiment-scores')) {
+          const experimentTracker = url.searchParams.get('experiment_tracker');
+          
+          if (!experimentTracker) {
+            res.statusCode = 400;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ error: 'experiment_tracker parameter is required' }));
+            return;
+          }
+
+          const subject = url.searchParams.get('subject') || null;
+          const gradeLevel = url.searchParams.get('grade_level') || null;
+          const questionType = url.searchParams.get('question_type') || null;
+
+          // Execute EXPERIMENT_SCORES query
+          // Parameters: experiment_tracker, subject, grade_level, question_type
+          const { rows } = await query(EXPERIMENT_SCORES, [
+            experimentTracker,
+            subject,
+            gradeLevel,
+            questionType
+          ]);
+
+          // Return full score objects with metadata
+          res.statusCode = 200;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify(rows));
+          return;
+        }
+
+        // Handle /api/evaluations
+        if (req.url.startsWith('/api/evaluations')) {
+          const experimentTracker = url.searchParams.get('experiment_tracker');
+          const subject = url.searchParams.get('subject');
+          
+          if (!experimentTracker || !subject) {
+            res.statusCode = 400;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ error: 'experiment_tracker and subject parameters are required' }));
+            return;
+          }
+
+          const difficulty = url.searchParams.get('difficulty') || null;
+          const maxScore = url.searchParams.get('max_score');
+          const maxScoreNum = maxScore ? parseFloat(maxScore) : null;
+          const gradeLevel = url.searchParams.get('grade_level') || null;
+          const questionType = url.searchParams.get('question_type') || null;
+
+          // Execute FETCH_EVALUATIONS query
+          // Parameters: experiment_tracker, subject, difficulty, max_score, grade_level, question_type
+          const { rows } = await query(FETCH_EVALUATIONS, [
+            experimentTracker,
+            subject,
+            difficulty,
+            maxScoreNum,
+            gradeLevel,
+            questionType
+          ]);
+
+          res.statusCode = 200;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify(rows));
+          return;
+        }
+
+        // Unknown API endpoint
+        res.statusCode = 404;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ error: 'API endpoint not found' }));
+
+      } catch (err: any) {
+        console.error('Error in API handler', err);
+        res.statusCode = 500;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(
+          JSON.stringify({
+            error: 'Failed to load data',
+            message: err.message,
+          }),
+        );
+      }
+    });
+  },
+});
+
+export default defineConfig({
+  plugins: [react(), apiPlugin()],
+  server: {
+    port: 5173,
+    host: true,
+  },
+});
