@@ -1289,339 +1289,259 @@ const Benchmarks: React.FC = () => {
         </div>
       )}
 
-      {/* Top Performers Modal - Matplotlib Style */}
+      {/* Top Performers Modal - Compact with Table + Graph */}
       {topPerformersModalOpen && (() => {
-        // Helper to render a matplotlib-style chart
-        const MatplotlibChart = ({ 
+        // Helper to render a compact chart with table on left, graph on right
+        const CompactChart = ({ 
           title, 
           data, 
           color,
-          icon 
         }: { 
           title: string; 
           data: LeaderboardRow[]; 
           color: string;
-          icon: React.ReactNode;
         }) => {
           const topData = data
             .sort((a, b) => b.percentage - a.percentage)
             .slice(0, 5);
           
-          const maxPercentage = 100; // Use 100 as max for consistent scale
-          const chartHeight = 380;
-          const barHeight = 50;
-          const chartPadding = { top: 40, right: 120, bottom: 50, left: 280 };
+          const maxPercentage = 100;
           
           return (
             <div style={{
-              background: 'var(--background)',
-              border: '1px solid var(--border)',
+              width: '100%',
+              background: 'rgba(255, 255, 255, 0.02)',
               borderRadius: '12px',
-              padding: '24px',
-              marginBottom: '24px',
+              padding: '20px',
+              border: '1px solid var(--border)',
+              marginBottom: '20px',
             }}>
               {/* Chart Title */}
-              <div style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '12px',
-                marginBottom: '24px',
+              <h3 style={{
+                fontSize: '15px',
+                fontWeight: '600',
+                color: 'var(--text)',
+                margin: '0 0 16px 0',
+                letterSpacing: '0.3px',
               }}>
-                <div style={{
-                  width: '32px',
-                  height: '32px',
-                  borderRadius: '8px',
-                  background: `${color}15`,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  color: color,
-                }}>
-                  {icon}
-                </div>
-                <h3 style={{
-                  fontSize: '18px',
-                  fontWeight: '600',
-                  color: 'var(--text)',
-                  margin: 0,
-                  fontFamily: 'monospace',
-                }}>
-                  {title} Difficulty Performance
-                </h3>
-              </div>
+                {title}
+              </h3>
 
-              {/* SVG Chart Container */}
+              {/* Two column layout: Table left, Graph right */}
               <div style={{
-                position: 'relative',
-                width: '100%',
-                height: `${chartHeight}px`,
-                background: 'var(--surface)',
-                borderRadius: '8px',
-                border: '1px solid var(--border)',
+                display: 'grid',
+                gridTemplateColumns: '1.3fr 1fr',
+                gap: '24px',
+                alignItems: 'center',
               }}>
-                <svg
-                  width="100%"
-                  height={chartHeight}
-                  style={{
-                    display: 'block',
-                  }}
-                >
-                  <defs>
-                    {/* Grid pattern */}
-                    <pattern id={`grid-${title}`} width="10%" height="20" patternUnits="userSpaceOnUse">
-                      <line x1="0" y1="0" x2="0" y2={chartHeight} stroke="var(--border)" strokeWidth="0.5" opacity="0.3" />
-                    </pattern>
+                {/* Left: Table */}
+                <div style={{
+                  background: 'rgba(255, 255, 255, 0.03)',
+                  borderRadius: '8px',
+                  border: '1px solid var(--border)',
+                  overflow: 'hidden',
+                }}>
+                  {/* Table Header */}
+                  <div style={{
+                    display: 'grid',
+                    gridTemplateColumns: '40px 1fr 90px 100px',
+                    padding: '10px 12px',
+                    background: 'rgba(255, 255, 255, 0.05)',
+                    borderBottom: '1px solid var(--border)',
+                    fontSize: '11px',
+                    fontWeight: '600',
+                    color: 'var(--text-secondary)',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.5px',
+                  }}>
+                    <div>Rank</div>
+                    <div>Model</div>
+                    <div style={{ textAlign: 'center' }}>Questions</div>
+                    <div style={{ textAlign: 'center' }}>Prompt Ver</div>
+                  </div>
+                  
+                  {/* Table Rows */}
+                  {topData.map((row, index) => {
+                    const isIncept = row.model.toLowerCase().includes('incept');
                     
-                    {/* Bar gradient */}
-                    <linearGradient id={`bar-gradient-${title}`} x1="0%" y1="0%" x2="100%" y2="0%">
-                      <stop offset="0%" stopColor={color} stopOpacity="0.9" />
-                      <stop offset="100%" stopColor={color} stopOpacity="0.6" />
-                    </linearGradient>
-                  </defs>
-                  
-                  {/* Background grid */}
-                  <rect width="100%" height="100%" fill={`url(#grid-${title})`} />
-                  
-                  {/* Vertical grid lines */}
-                  {[0, 20, 40, 60, 80, 100].map(val => {
-                    const x = chartPadding.left + ((val / maxPercentage) * (100 - chartPadding.left - chartPadding.right) * 10);
                     return (
-                      <g key={val}>
-                        <line
-                          x1={`${x}%`}
-                          y1={chartPadding.top}
-                          x2={`${x}%`}
-                          y2={chartHeight - chartPadding.bottom}
-                          stroke="var(--border)"
-                          strokeWidth="1"
-                          opacity="0.5"
-                          strokeDasharray={val === 0 ? "0" : "2,2"}
-                        />
-                        {/* X-axis labels */}
-                        <text
-                          x={`${x}%`}
-                          y={chartHeight - chartPadding.bottom + 25}
-                          textAnchor="middle"
-                          fill="var(--text-secondary)"
-                          fontSize="11"
-                          fontFamily="monospace"
+                      <div
+                        key={index}
+                        style={{
+                          display: 'grid',
+                          gridTemplateColumns: '40px 1fr 90px 100px',
+                          padding: '10px 12px',
+                          borderBottom: index < topData.length - 1 ? '1px solid var(--border)' : 'none',
+                          background: isIncept ? 'rgba(99, 102, 241, 0.05)' : 'transparent',
+                          transition: 'background 0.2s ease',
+                          cursor: 'pointer',
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.background = isIncept ? 'rgba(99, 102, 241, 0.1)' : 'var(--hover-bg)';
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.background = isIncept ? 'rgba(99, 102, 241, 0.05)' : 'transparent';
+                        }}
+                      >
+                        {/* Rank */}
+                        <div style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                        }}>
+                          <div style={{
+                            width: '24px',
+                            height: '24px',
+                            borderRadius: '50%',
+                            background: isIncept 
+                              ? 'linear-gradient(135deg, #6366f1, #8b5cf6)' 
+                              : index === 0 ? 'linear-gradient(135deg, #10b981, #059669)'
+                              : index === 1 ? 'linear-gradient(135deg, #3b82f6, #2563eb)'
+                              : index === 2 ? 'linear-gradient(135deg, #14b8a6, #0d9488)'
+                              : 'rgba(100, 100, 100, 0.6)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            color: 'white',
+                            fontSize: '11px',
+                            fontWeight: '700',
+                          }}>
+                            {index + 1}
+                          </div>
+                        </div>
+                        
+                        {/* Model name */}
+                        <div style={{
+                          fontSize: '13px',
+                          fontWeight: '500',
+                          color: 'var(--text)',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}>
+                          {row.model}
+                        </div>
+                        
+                        {/* Questions (x/y format) */}
+                        <div style={{
+                          fontSize: '12px',
+                          fontWeight: '600',
+                          color: 'var(--text-secondary)',
+                          textAlign: 'center',
+                          fontFamily: 'monospace',
+                        }}>
+                          {row.questionsAboveThreshold}/{row.totalQuestions}
+                        </div>
+                        
+                        {/* Prompt Version */}
+                        <div 
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            // TODO: Add prompt version action
+                          }}
+                          style={{
+                            fontSize: '12px',
+                            fontWeight: '500',
+                            color: 'var(--primary)',
+                            textAlign: 'center',
+                            fontFamily: 'monospace',
+                            cursor: 'pointer',
+                            transition: 'opacity 0.2s ease',
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.opacity = '0.7';
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.opacity = '1';
+                          }}
                         >
-                          {val}%
-                        </text>
-                      </g>
+                          -
+                        </div>
+                      </div>
                     );
                   })}
-                  
-                  {/* Bars and labels */}
+                </div>
+
+                {/* Right: Horizontal Bar Graph */}
+                <div style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '10px',
+                }}>
                   {topData.map((row, index) => {
-                    const y = chartPadding.top + (index * (barHeight + 10));
-                    const barWidthPercent = (row.percentage / maxPercentage) * (100 - chartPadding.left - chartPadding.right);
+                    const barWidthPercent = (row.percentage / maxPercentage) * 100;
+                    const isIncept = row.model.toLowerCase().includes('incept');
                     
                     return (
-                      <g key={index}>
-                        {/* Model name (Y-axis label) */}
-                        <text
-                          x={chartPadding.left - 10}
-                          y={y + (barHeight / 2) + 4}
-                          textAnchor="end"
-                          fill="var(--text)"
-                          fontSize="12"
-                          fontWeight="500"
-                          style={{
-                            fontFamily: 'system-ui, -apple-system, sans-serif',
-                          }}
-                        >
-                          {row.model.length > 30 ? row.model.substring(0, 30) + '...' : row.model}
-                        </text>
-                        
-                        {/* Rank badge */}
-                        <circle
-                          cx={chartPadding.left - 265}
-                          cy={y + (barHeight / 2)}
-                          r="12"
-                          fill={index < 3 ? 'var(--primary)' : 'var(--border)'}
-                          opacity="0.2"
-                        />
-                        <text
-                          x={chartPadding.left - 265}
-                          y={y + (barHeight / 2) + 4}
-                          textAnchor="middle"
-                          fill={index < 3 ? 'var(--primary)' : 'var(--text-secondary)'}
-                          fontSize="11"
-                          fontWeight="700"
-                          fontFamily="monospace"
-                        >
-                          {index + 1}
-                        </text>
-                        
+                      <div
+                        key={index}
+                        style={{
+                          position: 'relative',
+                        }}
+                      >
                         {/* Bar background */}
-                        <rect
-                          x={`${chartPadding.left}%`}
-                          y={y}
-                          width={`${100 - chartPadding.left - chartPadding.right}%`}
-                          height={barHeight}
-                          fill="rgba(255, 255, 255, 0.02)"
-                          rx="4"
-                        />
-                        
-                        {/* Animated bar */}
-                        <rect
-                          x={`${chartPadding.left}%`}
-                          y={y}
-                          width={`${barWidthPercent}%`}
-                          height={barHeight}
-                          fill={`url(#bar-gradient-${title})`}
-                          rx="4"
-                          style={{
-                            transition: 'width 0.8s cubic-bezier(0.4, 0, 0.2, 1)',
-                          }}
-                        />
-                        
-                        {/* Bar border */}
-                        <rect
-                          x={`${chartPadding.left}%`}
-                          y={y}
-                          width={`${barWidthPercent}%`}
-                          height={barHeight}
-                          fill="none"
-                          stroke={color}
-                          strokeWidth="1.5"
-                          rx="4"
-                          opacity="0.4"
-                        />
-                        
-                        {/* Percentage label inside bar */}
-                        {row.percentage > 10 && (
-                          <text
-                            x={`${chartPadding.left + (barWidthPercent) - 2}%`}
-                            y={y + (barHeight / 2) + 4}
-                            textAnchor="end"
-                            fill="white"
-                            fontSize="13"
-                            fontWeight="700"
-                            fontFamily="monospace"
+                        <div style={{
+                          position: 'relative',
+                          height: '32px',
+                          background: 'rgba(255, 255, 255, 0.05)',
+                          borderRadius: '6px',
+                          overflow: 'visible',
+                        }}>
+                          {/* Vertical grid lines */}
+                          {[25, 50, 75].map(val => (
+                            <div
+                              key={val}
+                              style={{
+                                position: 'absolute',
+                                left: `${val}%`,
+                                top: 0,
+                                bottom: 0,
+                                width: '1px',
+                                background: 'var(--border)',
+                                opacity: 0.2,
+                              }}
+                            />
+                          ))}
+                          
+                          {/* Bar fill */}
+                          <div
                             style={{
-                              textShadow: '0 1px 3px rgba(0,0,0,0.5)',
+                              position: 'absolute',
+                              left: 0,
+                              top: 0,
+                              bottom: 0,
+                              width: `${barWidthPercent}%`,
+                              background: isIncept
+                                ? 'linear-gradient(90deg, #6366f1 0%, #8b5cf6 100%)'
+                                : index === 0
+                                ? 'linear-gradient(90deg, #10b981 0%, #059669 100%)'
+                                : index === 1
+                                ? 'linear-gradient(90deg, #3b82f6 0%, #2563eb 100%)'
+                                : index === 2
+                                ? 'linear-gradient(90deg, #14b8a6 0%, #0d9488 100%)'
+                                : `linear-gradient(90deg, ${color} 0%, ${color}cc 100%)`,
+                              borderRadius: '6px',
+                              transition: 'all 0.3s ease',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
                             }}
                           >
-                            {row.percentage.toFixed(1)}%
-                          </text>
-                        )}
-                        
-                        {/* Percentage label outside bar if too small */}
-                        {row.percentage <= 10 && (
-                          <text
-                            x={`${chartPadding.left + (barWidthPercent) + 2}%`}
-                            y={y + (barHeight / 2) + 4}
-                            textAnchor="start"
-                            fill="var(--text)"
-                            fontSize="13"
-                            fontWeight="700"
-                            fontFamily="monospace"
-                          >
-                            {row.percentage.toFixed(1)}%
-                          </text>
-                        )}
-                        
-                        {/* Questions info */}
-                        <text
-                          x={`${100 - chartPadding.right + 5}%`}
-                          y={y + (barHeight / 2) - 6}
-                          textAnchor="start"
-                          fill="var(--text-secondary)"
-                          fontSize="10"
-                          fontFamily="monospace"
-                        >
-                          Q≥0.85: {row.questionsAboveThreshold}
-                        </text>
-                        <text
-                          x={`${100 - chartPadding.right + 5}%`}
-                          y={y + (barHeight / 2) + 10}
-                          textAnchor="start"
-                          fill="var(--text-secondary)"
-                          fontSize="10"
-                          fontFamily="monospace"
-                        >
-                          Total: {row.totalQuestions}
-                        </text>
-                      </g>
+                            {/* Percentage inside bar */}
+                            <div style={{
+                              fontSize: '13px',
+                              color: 'white',
+                              fontWeight: '700',
+                              fontFamily: 'monospace',
+                              textShadow: '0 1px 3px rgba(0, 0, 0, 0.5)',
+                            }}>
+                              {row.percentage.toFixed(1)}%
+                            </div>
+                          </div>
+                        </div>
+                      </div>
                     );
                   })}
-                  
-                  {/* Chart border */}
-                  <rect
-                    x={`${chartPadding.left}%`}
-                    y={chartPadding.top}
-                    width={`${100 - chartPadding.left - chartPadding.right}%`}
-                    height={chartHeight - chartPadding.top - chartPadding.bottom}
-                    fill="none"
-                    stroke="var(--border)"
-                    strokeWidth="2"
-                  />
-                  
-                  {/* X-axis label */}
-                  <text
-                    x="50%"
-                    y={chartHeight - 10}
-                    textAnchor="middle"
-                    fill="var(--text)"
-                    fontSize="12"
-                    fontWeight="600"
-                    fontFamily="monospace"
-                  >
-                    Success Rate (%)
-                  </text>
-                  
-                  {/* Y-axis label */}
-                  <text
-                    x={chartPadding.left - 150}
-                    y={20}
-                    textAnchor="middle"
-                    fill="var(--text)"
-                    fontSize="12"
-                    fontWeight="600"
-                    fontFamily="monospace"
-                  >
-                    Model
-                  </text>
-                </svg>
-              </div>
-              
-              {/* Stats summary */}
-              <div style={{
-                marginTop: '16px',
-                padding: '12px 16px',
-                background: 'var(--surface)',
-                borderRadius: '6px',
-                border: '1px solid var(--border)',
-                display: 'flex',
-                gap: '24px',
-                fontSize: '12px',
-                fontFamily: 'monospace',
-              }}>
-                <div>
-                  <span style={{ color: 'var(--text-secondary)' }}>Avg: </span>
-                  <span style={{ color: 'var(--text)', fontWeight: '600' }}>
-                    {(topData.reduce((sum, d) => sum + d.percentage, 0) / topData.length).toFixed(1)}%
-                  </span>
-                </div>
-                <div>
-                  <span style={{ color: 'var(--text-secondary)' }}>Max: </span>
-                  <span style={{ color: color, fontWeight: '600' }}>
-                    {Math.max(...topData.map(d => d.percentage)).toFixed(1)}%
-                  </span>
-                </div>
-                <div>
-                  <span style={{ color: 'var(--text-secondary)' }}>Min: </span>
-                  <span style={{ color: 'var(--text)', fontWeight: '600' }}>
-                    {Math.min(...topData.map(d => d.percentage)).toFixed(1)}%
-                  </span>
-                </div>
-                <div>
-                  <span style={{ color: 'var(--text-secondary)' }}>Total Models: </span>
-                  <span style={{ color: 'var(--text)', fontWeight: '600' }}>
-                    {data.length}
-                  </span>
                 </div>
               </div>
             </div>
@@ -1637,13 +1557,13 @@ const Benchmarks: React.FC = () => {
               left: 0,
               right: 0,
               bottom: 0,
-              background: 'rgba(0, 0, 0, 0.8)',
+              background: 'rgba(0, 0, 0, 0.85)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
               zIndex: 1000,
               padding: '20px',
-              backdropFilter: 'blur(4px)',
+              backdropFilter: 'blur(8px)',
             }}
           >
             <div
@@ -1651,64 +1571,49 @@ const Benchmarks: React.FC = () => {
               style={{
                 background: 'var(--surface)',
                 borderRadius: '16px',
-                maxWidth: '1600px',
+                maxWidth: '1400px',
                 width: '100%',
-                maxHeight: '90vh',
+                maxHeight: '85vh',
                 display: 'flex',
                 flexDirection: 'column',
-                boxShadow: '0 20px 60px rgba(0, 0, 0, 0.5)',
+                boxShadow: '0 25px 80px rgba(0, 0, 0, 0.6)',
                 border: '1px solid var(--border)',
+                overflow: 'hidden',
               }}
             >
               {/* Modal Header */}
               <div style={{
-                padding: '24px',
+                padding: '20px 24px',
                 borderBottom: '1px solid var(--border)',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'space-between',
-                background: 'linear-gradient(135deg, rgba(158, 127, 255, 0.05), transparent)',
+                background: 'linear-gradient(135deg, rgba(158, 127, 255, 0.08), transparent)',
               }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                  <div style={{
-                    width: '48px',
-                    height: '48px',
-                    borderRadius: '12px',
-                    background: 'linear-gradient(135deg, var(--primary), #8b5cf6)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    color: 'white',
-                    boxShadow: '0 4px 12px rgba(158, 127, 255, 0.3)',
+                <div>
+                  <h2 style={{
+                    fontSize: '20px',
+                    fontWeight: '700',
+                    color: 'var(--text)',
+                    margin: 0,
+                    letterSpacing: '-0.3px',
                   }}>
-                    <BarChart3 size={24} />
-                  </div>
-                  <div>
-                    <h2 style={{
-                      fontSize: '22px',
-                      fontWeight: '700',
-                      color: 'var(--text)',
-                      margin: 0,
-                      fontFamily: 'system-ui, -apple-system, sans-serif',
-                    }}>
-                      Model Performance Analysis
-                    </h2>
-                    <p style={{
-                      fontSize: '13px',
-                      color: 'var(--text-secondary)',
-                      margin: '4px 0 0 0',
-                      fontFamily: 'monospace',
-                    }}>
-                      Top 5 performers across difficulty levels • {selectedSubject.toUpperCase()} Subject
-                    </p>
-                  </div>
+                    Top 5
+                  </h2>
+                  <p style={{
+                    fontSize: '12px',
+                    color: 'var(--text-secondary)',
+                    margin: '4px 0 0 0',
+                  }}>
+                    {selectedSubject.toUpperCase()} benchmarks
+                  </p>
                 </div>
                 <button
                   onClick={() => setTopPerformersModalOpen(false)}
                   style={{
-                    width: '40px',
-                    height: '40px',
-                    borderRadius: '10px',
+                    width: '36px',
+                    height: '36px',
+                    borderRadius: '8px',
                     background: 'transparent',
                     border: '1px solid var(--border)',
                     color: 'var(--text-secondary)',
@@ -1729,43 +1634,40 @@ const Benchmarks: React.FC = () => {
                     e.currentTarget.style.borderColor = 'var(--border)';
                   }}
                 >
-                  <X size={20} />
+                  <X size={18} />
                 </button>
               </div>
 
-              {/* Modal Body - Scrollable */}
+              {/* Modal Body - Charts Stacked Vertically */}
               <div style={{
                 flex: 1,
                 overflowY: 'auto',
                 overflowX: 'hidden',
-                padding: '32px',
+                padding: '24px',
               }}
               className="custom-scrollbar"
               >
                 {groupedByDifficulty['Easy'] && groupedByDifficulty['Easy'].length > 0 && (
-                  <MatplotlibChart
+                  <CompactChart
                     title="Easy"
                     data={groupedByDifficulty['Easy']}
                     color="#10b981"
-                    icon={<TrendingUp size={16} />}
                   />
                 )}
 
                 {groupedByDifficulty['Medium'] && groupedByDifficulty['Medium'].length > 0 && (
-                  <MatplotlibChart
+                  <CompactChart
                     title="Medium"
                     data={groupedByDifficulty['Medium']}
                     color="#f59e0b"
-                    icon={<BarChart3 size={16} />}
                   />
                 )}
 
                 {groupedByDifficulty['Hard'] && groupedByDifficulty['Hard'].length > 0 && (
-                  <MatplotlibChart
+                  <CompactChart
                     title="Hard"
                     data={groupedByDifficulty['Hard']}
                     color="#ef4444"
-                    icon={<TrendingUp size={16} />}
                   />
                 )}
               </div>
