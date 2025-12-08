@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Cache Debugger</title>
+    <style>
+        body {
+            font-family: monospace;
+            padding: 20px;
+            background: #1e1e1e;
+            color: #d4d4d4;
+        }
+        .section {
+            background: #252526;
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 8px;
+            border: 1px solid #3e3e42;
+        }
+        .error { color: #f48771; }
+        .success { color: #4ec9b0; }
+        .warning { color: #dcdcaa; }
+        pre {
+            background: #1e1e1e;
+            padding: 10px;
+            border-radius: 4px;
+            overflow-x: auto;
+        }
+        button {
+            background: #0e639c;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background: #1177bb;
+        }
+    </style>
+</head>
+<body>
+    <h1>Compare Reports Cache Debugger</h1>
+    
+    <div class="section">
+        <h2>Quick Actions</h2>
+        <button onclick="diagnose()">🔍 Diagnose Cache</button>
+        <button onclick="clearCache()">🗑️ Clear Cache</button>
+        <button onclick="exportCache()">💾 Export Cache</button>
+    </div>
+    
+    <div id="output"></div>
+
+    <script>
+        function log(message, type = 'info') {
+            const output = document.getElementById('output');
+            const div = document.createElement('div');
+            div.className = `section ${type}`;
+            div.innerHTML = message;
+            output.appendChild(div);
+        }
+
+        function clearOutput() {
+            document.getElementById('output').innerHTML = '';
+        }
+
+        function diagnose() {
+            clearOutput();
+            log('<h2>🔍 Cache Diagnosis</h2>', 'info');
+            
+            const CACHE_KEY = 'experiment_reports_cache';
+            const cacheStr = localStorage.getItem(CACHE_KEY);
+            
+            if (!cacheStr) {
+                log('<h3 class="error">❌ No Cache Found</h3><p>The cache is empty. You need to:</p><ol><li>Go to the Evaluations page</li><li>Select an experiment</li><li>Wait for data to load</li><li>Return to Compare page</li></ol>', 'error');
+                return;
+            }
+            
+            log('<h3 class="success">✅ Cache Found</h3>', 'success');
+            
+            try {
+                const cache = JSON.parse(cacheStr);
+                log(`<p><strong>Number of cached reports:</strong> ${cache.length}</p>`, 'success');
+                
+                if (cache.length === 0) {
+                    log('<p class="warning">Cache array is empty. No reports cached yet.</p>', 'warning');
+                    return;
+                }
+                
+                cache.forEach((report, idx) => {
+                    log(`<h3>📊 Report ${idx + 1}</h3>`, 'info');
+                    
+                    log(`<p><strong>Experiment Tracker:</strong> ${report.experiment_tracker?.substring(0, 20)}...</p>
+                         <p><strong>Subject:</strong> ${report.subject || 'Not set'}</p>
+                         <p><strong>Grade Level:</strong> ${report.grade_level || 'Not set'}</p>
+                         <p><strong>Question Type:</strong> ${report.question_type || 'Not set'}</p>
+                         <p><strong>Cached:</strong> ${new Date(report.timestamp).toLocaleString()}</p>`, 'info');
+                    
+                    // Check reportData
+                    if (!report.reportData) {
+                        log('<p class="error">❌ Missing reportData field!</p>', 'error');
+                    } else if (!Array.isArray(report.reportData)) {
+                        log(`<p class="error">❌ reportData is not an array: ${typeof report.reportData}</p>`, 'error');
+                    } else if (report.reportData.length === 0) {
+                        log('<p class="error">❌ reportData array is empty!</p>', 'error');
+                    } else {
+                        log(`<p class="success">✅ reportData: ${report.reportData.length} entries</p>`, 'success');
+                        
+                        // Show each difficulty's data
+                        report.reportData.forEach(diffData => {
+                            const hasLatency = diffData.avg_ttft_ms != null && diffData.avg_total_generation_ms != null;
+                            const hasPerformance = diffData.success_percentage != null;
+                            
+                            log(`<div style="margin-left: 20px;">
+                                <h4>Difficulty: ${diffData.difficulty}</h4>
+                                <pre>${JSON.stringify({
+                                    difficulty: diffData.difficulty,
+                                    avg_ttft_ms: diffData.avg_ttft_ms,
+                                    median_ttft_ms: diffData.median_ttft_ms,
+                                    p90_ttft_ms: diffData.p90_ttft_ms,
+                                    avg_total_generation_ms: diffData.avg_total_generation_ms,
+                                    median_total_generation_ms: diffData.median_total_generation_ms,
+                                    p90_total_generation_ms: diffData.p90_total_generation_ms,
+                                    success_percentage: diffData.success_percentage,
+                                    total_questions: diffData.total_questions,
+                                    questions_above_threshold: diffData.questions_above_threshold
+                                }, null, 2)}</pre>
+                                ${hasLatency ? '<p class="success">✅ Has latency data</p>' : '<p class="error">❌ Missing latency data</p>'}
+                                ${hasPerformance ? '<p class="success">✅ Has performance data</p>' : '<p class="error">❌ Missing performance data</p>'}
+                            </div>`, 'info');
+                        });
+                    }
+                    
+                    // Check scoresData
+                    if (!report.scoresData) {
+                        log('<p class="error">❌ Missing scoresData field!</p>', 'error');
+                    } else if (!Array.isArray(report.scoresData)) {
+                        log(`<p class="error">❌ scoresData is not an array: ${typeof report.scoresData}</p>`, 'error');
+                    } else {
+                        log(`<p class="success">✅ scoresData: ${report.scoresData.length} entries</p>`, 'success');
+                        if (report.scoresData.length > 0) {
+                            log(`<pre>Sample score: ${JSON.stringify(report.scoresData[0], null, 2)}</pre>`, 'info');
+                        }
+                    }
+                    
+                    // Check summaryData
+                    if (!report.summaryData) {
+                        log('<p class="warning">⚠️ No summaryData (optional)</p>', 'warning');
+                    } else {
+                        log('<p class="success">✅ Has summaryData</p>', 'success');
+                    }
+                });
+                
+            } catch (err) {
+                log(`<h3 class="error">❌ Error Parsing Cache</h3><p>${err.message}</p><pre>${err.stack}</pre>`, 'error');
+            }
+        }
+
+        function clearCache() {
+            const CACHE_KEY = 'experiment_reports_cache';
+            localStorage.removeItem(CACHE_KEY);
+            clearOutput();
+            log('<h2 class="success">✅ Cache Cleared</h2><p>Visit the Evaluations page to rebuild the cache.</p>', 'success');
+        }
+
+        function exportCache() {
+            const CACHE_KEY = 'experiment_reports_cache';
+            const cacheStr = localStorage.getItem(CACHE_KEY);
+            
+            if (!cacheStr) {
+                alert('No cache to export');
+                return;
+            }
+            
+            const blob = new Blob([cacheStr], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'experiment_reports_cache.json';
+            a.click();
+            URL.revokeObjectURL(url);
+            
+            clearOutput();
+            log('<h2 class="success">✅ Cache Exported</h2><p>Check your downloads folder.</p>', 'success');
+        }
+
+        // Auto-diagnose on load
+        window.onload = diagnose;
+    </script>
+</body>
+</html>
+

@@ -6,9 +6,12 @@ A modern web application for managing benchmarks, evaluations, and evaluator com
 
 - 🔐 **Authentication System** - Secure login page
 - 📊 **Benchmarks Dashboard** - View and manage benchmarks
-- 📝 **Evaluations** - Track and manage evaluations
+- 📝 **Evaluations** - Track and manage evaluations with experiment reports
+- 🔄 **Compare Reports** - Compare up to 3 cached experiment reports side-by-side
 - 💬 **Evaluator Comments** - Review and manage evaluator feedback
+- 📊 **Data Explorer** - Browse and analyze raw data
 - 🎨 **Modern UI** - Clean and responsive interface with Lucide icons
+- 🌙 **Dark/Light Theme** - Toggle between dark and light modes
 
 ## Tech Stack
 
@@ -80,21 +83,33 @@ This serves the built application from the `dist` folder.
 incept_evaluation_portal/
 ├── src/
 │   ├── components/       # Reusable React components
-│   │   └── Layout.tsx    # Main layout component
+│   │   └── Layout.tsx    # Main layout with navigation
 │   ├── pages/           # Page components
 │   │   ├── Login.tsx    # Authentication page
-│   │   ├── Benchmarks.tsx
-│   │   ├── Evaluations.tsx
+│   │   ├── Benchmarks.tsx      # Leaderboards page
+│   │   ├── Evaluations.tsx     # Experiment reports
+│   │   ├── CompareReports.tsx  # Compare experiments (NEW)
+│   │   ├── LookAtData.tsx      # Data explorer
 │   │   └── EvaluatorComments.tsx
 │   ├── data/            # Mock data and constants
-│   │   └── mockEvaluations.ts
+│   │   ├── mockEvaluations.ts
+│   │   └── leaderboardData.ts
+│   ├── services/        # Database and API services
+│   │   └── db.ts
+│   ├── types/           # TypeScript type definitions
 │   ├── App.tsx          # Main application component
 │   ├── main.tsx         # Application entry point
 │   └── index.css        # Global styles
+├── services/            # Backend services (Node.js)
+│   ├── db.ts
+│   └── queries.ts
+├── scripts/             # Utility scripts
 ├── index.html           # HTML template
 ├── package.json         # Dependencies and scripts
 ├── tsconfig.json        # TypeScript configuration
 ├── vite.config.ts       # Vite configuration
+├── EXPERIMENT_REPORT_FEATURE.md
+├── COMPARE_REPORTS_FEATURE.md  # New feature documentation
 └── README.md           # This file
 ```
 
@@ -110,6 +125,28 @@ incept_evaluation_portal/
 2. Make changes to the code - HMR will update the browser automatically
 3. Build for production when ready with `npm run build`
 4. Test the production build with `npm run preview`
+
+## Key Features Guide
+
+### Leaderboards (Benchmarks)
+View experiment performance rankings with filtering by subject, grade level, and question type. Click on any experiment row to view detailed reports.
+
+### Evaluations (Experiment Reports)
+- View detailed experiment performance broken down by difficulty
+- See latency metrics (TTFT, Total Generation Time) with percentiles
+- Analyze evaluator scores distribution
+- Filter by subject, grade level, and question type
+- Reports are automatically cached for comparison
+
+### Compare Reports (NEW)
+- Compare up to 3 cached experiment reports side-by-side
+- Compare latency metrics across difficulties
+- Compare performance (success rates) across difficulties
+- View evaluator score distributions with bar charts
+- Manage cached reports (view, select, delete)
+
+### Data Explorer
+Browse and analyze raw data from experiments with advanced filtering and search capabilities.
 
 ## Login
 

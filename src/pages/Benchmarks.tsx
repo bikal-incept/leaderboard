@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowUpDown, FileText, Copy, Check, ChevronDown, ChevronUp, Filter, Eye, X, BarChart3, TrendingUp } from 'lucide-react';
+import { ArrowUpDown, FileText, Copy, Check, ChevronDown, ChevronUp, Filter, Eye, X, TrendingUp, Download } from 'lucide-react';
 import { leaderboardData, type LeaderboardRow } from '../data/leaderboardData';
 
 const SUBJECTS = ['ela', 'math'] as const;
@@ -30,11 +30,97 @@ const Benchmarks: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [copiedExperiment, setCopiedExperiment] = useState<string | null>(null);
   const [showFilters, setShowFilters] = useState(false);
+  const [addedToCache, setAddedToCache] = useState<string | null>(null);
+  const [isCaching, setIsCaching] = useState<string | null>(null);
   
   // Modal states
   const [difficultyModalOpen, setDifficultyModalOpen] = useState(false);
   const [selectedDifficulty, setSelectedDifficulty] = useState<string | null>(null);
   const [topPerformersModalOpen, setTopPerformersModalOpen] = useState(false);
+
+  // Cache helpers (match Evaluations/CompareReports)
+  const CACHE_KEY = 'experiment_reports_cache';
+  const MAX_CACHE_ITEMS = 4;
+
+  const getCacheKey = (filters: { experiment_tracker: string; subject: string; grade_level: string; question_type: string }) => {
+    return `${filters.experiment_tracker}|${filters.subject}|${filters.grade_level}|${filters.question_type}`;
+  };
+
+  const loadCache = () => {
+    try {
+      const cached = localStorage.getItem(CACHE_KEY);
+      if (!cached) return [];
+    const parsed = JSON.parse(cached);
+    const cleaned = parsed.filter((item: any) => item.experiment_tracker && item.reportData !== undefined);
+      cleaned.sort((a: any, b: any) => (b.timestamp ?? 0) - (a.timestamp ?? 0));
+      return cleaned.slice(0, MAX_CACHE_ITEMS);
+    } catch (err) {
+      console.error('[Benchmarks Cache] Failed to load cache', err);
+      return [];
+    }
+  };
+
+  const saveToCache = (
+    filters: { experiment_tracker: string; subject: string; grade_level: string; question_type: string },
+    reportData: any[],
+    summaryData: any,
+    scoresData: any[]
+  ) => {
+    if (!reportData || reportData.length === 0) {
+      console.warn('[Benchmarks Cache] Skipping cache - no report data');
+      return;
+    }
+    try {
+      const cache = loadCache();
+      const cacheKey = getCacheKey(filters);
+      const filteredCache = cache.filter((item: any) => getCacheKey(item) !== cacheKey);
+      const newEntry = {
+        ...filters,
+        timestamp: Date.now(),
+        reportData,
+        summaryData,
+        scoresData,
+      };
+      const newCache = [newEntry, ...filteredCache].slice(0, MAX_CACHE_ITEMS);
+
+      const persistCache = (data: any[]) => localStorage.setItem(CACHE_KEY, JSON.stringify(data));
+
+      try {
+        persistCache(newCache);
+        console.log('[Benchmarks Cache] Cached experiment', filters.experiment_tracker);
+      } catch (quotaError: any) {
+        if (quotaError?.name === 'QuotaExceededError') {
+          console.warn('[Benchmarks Cache] Quota exceeded, attempting LRU eviction');
+
+          if (filteredCache.length > 0) {
+            const reducedCache = [newEntry, ...filteredCache.slice(0, -1)];
+            try {
+              persistCache(reducedCache);
+              console.log('[Benchmarks Cache] Saved after evicting oldest item');
+            } catch (secondError: any) {
+              if (reducedCache.length > 1) {
+                const minimalCache = [newEntry];
+                try {
+                  persistCache(minimalCache);
+                  console.log('[Benchmarks Cache] Saved with minimal cache (1 item)');
+                } catch (finalError) {
+                  console.error('[Benchmarks Cache] Failed even with minimal cache. Data may be too large.', finalError);
+                }
+              } else {
+                console.error('[Benchmarks Cache] Single item too large for localStorage', secondError);
+              }
+            }
+          } else {
+            console.error('[Benchmarks Cache] Cannot save - single report exceeds localStorage quota');
+          }
+        } else {
+          throw quotaError;
+        }
+      }
+    } catch (err) {
+      console.error('[Benchmarks Cache] Failed to save cache', err);
+    }
+  };
 
   // Check if there are unapplied filter changes
   const hasUnappliedChanges = 
@@ -569,6 +655,96 @@ const Benchmarks: React.FC = () => {
                     title="View data for this experiment"
                   >
                     <Eye size={12} />
+                  </button>
+                  <button
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      const params = new URLSearchParams({
+                        experiment_tracker: row.model,
+                        subject: selectedSubject,
+                        ...(appliedGradeLevel && { grade_level: appliedGradeLevel }),
+                        ...(appliedQuestionType && { question_type: appliedQuestionType }),
+                      });
+                      try {
+                        setIsCaching(row.model);
+                        const [reportRes, summaryRes, scoresRes] = await Promise.all([
+                          fetch(`/api/experiment-report?${params.toString()}`),
+                          fetch(`/api/experiment-summary?${params.toString()}`),
+                          fetch(`/api/experiment-scores?${params.toString()}`),
+                        ]);
+                        if (reportRes.ok && summaryRes.ok && scoresRes.ok) {
+                          const reportData = await reportRes.json();
+                          const summaryData = await summaryRes.json();
+                          const scoresData = await scoresRes.json();
+                          saveToCache(
+                            {
+                              experiment_tracker: row.model,
+                              subject: selectedSubject,
+                              grade_level: appliedGradeLevel || '',
+                              question_type: appliedQuestionType || '',
+                            },
+                            reportData || [],
+                            summaryData || null,
+                            scoresData || []
+                          );
+                          setAddedToCache(row.model);
+                          setTimeout(() => setAddedToCache(null), 3000);
+                        } else {
+                          console.warn('[Benchmarks Cache] Failed to fetch report/summary/scores');
+                        }
+                      } catch (err) {
+                        console.error('[Benchmarks Cache] Failed to add to cache', err);
+                      } finally {
+                        setIsCaching(null);
+                      }
+                    }}
+                    style={{
+                      padding: '4px 8px',
+                      fontSize: '11px',
+                      background: addedToCache === row.model ? 'rgba(34, 197, 94, 0.2)' : 'transparent',
+                      border: `1px solid ${addedToCache === row.model ? 'rgb(34, 197, 94)' : 'var(--border)'}`,
+                      borderRadius: '4px',
+                      color: addedToCache === row.model ? 'rgb(34, 197, 94)' : 'var(--text-secondary)',
+                      cursor: isCaching === row.model ? 'wait' : 'pointer',
+                      transition: 'all 0.2s ease',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '4px',
+                      flexShrink: 0,
+                      fontWeight: '500',
+                      minWidth: '64px',
+                    }}
+                    onMouseEnter={(e) => {
+                      if (addedToCache !== row.model && isCaching !== row.model) {
+                        e.currentTarget.style.background = 'rgba(158, 127, 255, 0.1)';
+                        e.currentTarget.style.color = 'var(--primary)';
+                        e.currentTarget.style.borderColor = 'var(--primary)';
+                      }
+                    }}
+                    onMouseLeave={(e) => {
+                      if (addedToCache !== row.model && isCaching !== row.model) {
+                        e.currentTarget.style.background = 'transparent';
+                        e.currentTarget.style.color = 'var(--text-secondary)';
+                        e.currentTarget.style.borderColor = 'var(--border)';
+                      }
+                    }}
+                    title="Add to cache (silent)"
+                    disabled={isCaching === row.model}
+                  >
+                    {addedToCache === row.model ? (
+                      <>
+                        <Check size={12} />
+                        <span>Added</span>
+                      </>
+                    ) : isCaching === row.model ? (
+                      <span>...</span>
+                    ) : (
+                      <>
+                        <Download size={12} />
+                        <span>Cache</span>
+                      </>
+                    )}
                   </button>
                 </div>
 
@@ -1134,32 +1310,67 @@ const Benchmarks: React.FC = () => {
                   </p>
                 </div>
               </div>
-              <button
-                onClick={() => setDifficultyModalOpen(false)}
-                style={{
-                  width: '36px',
-                  height: '36px',
-                  borderRadius: '8px',
-                  background: 'transparent',
-                  border: '1px solid var(--border)',
-                  color: 'var(--text-secondary)',
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  transition: 'all 0.2s ease',
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = 'var(--hover-bg)';
-                  e.currentTarget.style.color = 'var(--text)';
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = 'transparent';
-                  e.currentTarget.style.color = 'var(--text-secondary)';
-                }}
-              >
-                <X size={20} />
-              </button>
+              
+              {/* Action buttons */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <button
+                  onClick={() => setTopPerformersModalOpen(true)}
+                  style={{
+                    padding: '8px 16px',
+                    fontSize: '13px',
+                    background: 'transparent',
+                    border: '1px solid var(--border)',
+                    borderRadius: '8px',
+                    color: 'var(--text)',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    fontWeight: '500',
+                    transition: 'all 0.2s ease',
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = 'rgba(34, 197, 94, 0.1)';
+                    e.currentTarget.style.borderColor = 'rgb(34, 197, 94)';
+                    e.currentTarget.style.color = 'rgb(34, 197, 94)';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = 'transparent';
+                    e.currentTarget.style.borderColor = 'var(--border)';
+                    e.currentTarget.style.color = 'var(--text)';
+                  }}
+                  title="View top performers"
+                >
+                  <TrendingUp size={16} />
+                  Top Performers
+                </button>
+                <button
+                  onClick={() => setDifficultyModalOpen(false)}
+                  style={{
+                    width: '36px',
+                    height: '36px',
+                    borderRadius: '8px',
+                    background: 'transparent',
+                    border: '1px solid var(--border)',
+                    color: 'var(--text-secondary)',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    transition: 'all 0.2s ease',
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = 'var(--hover-bg)';
+                    e.currentTarget.style.color = 'var(--text)';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = 'transparent';
+                    e.currentTarget.style.color = 'var(--text-secondary)';
+                  }}
+                >
+                  <X size={20} />
+                </button>
+              </div>
             </div>
 
             {/* Modal Body - Scrollable */}
@@ -1241,11 +1452,96 @@ const Benchmarks: React.FC = () => {
                         fontSize: '13px',
                         fontWeight: '500',
                         color: isIncept ? 'var(--primary)' : 'var(--text)',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
                       }}>
-                        {row.model}
+                        <span style={{
+                          flex: 1,
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}>
+                          {row.model}
+                        </span>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            navigator.clipboard.writeText(row.model);
+                            setCopiedExperiment(row.model);
+                            setTimeout(() => setCopiedExperiment(null), 2000);
+                          }}
+                          style={{
+                            padding: '4px',
+                            fontSize: '11px',
+                            background: copiedExperiment === row.model ? 'var(--success)' : 'transparent',
+                            border: '1px solid var(--border)',
+                            borderRadius: '4px',
+                            color: copiedExperiment === row.model ? 'white' : 'var(--text-secondary)',
+                            cursor: 'pointer',
+                            transition: 'all 0.2s ease',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            flexShrink: 0,
+                          }}
+                          onMouseEnter={(e) => {
+                            if (copiedExperiment !== row.model) {
+                              e.currentTarget.style.background = 'var(--hover-bg)';
+                              e.currentTarget.style.color = 'var(--text)';
+                            }
+                          }}
+                          onMouseLeave={(e) => {
+                            if (copiedExperiment !== row.model) {
+                              e.currentTarget.style.background = 'transparent';
+                              e.currentTarget.style.color = 'var(--text-secondary)';
+                            }
+                          }}
+                          title="Copy experiment tracker"
+                        >
+                          {copiedExperiment === row.model ? (
+                            <Check size={12} />
+                          ) : (
+                            <Copy size={12} />
+                          )}
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const params = new URLSearchParams({
+                              experiment_tracker: row.model,
+                              subject: selectedSubject,
+                            });
+                            navigate(`/look-at-data?${params.toString()}`);
+                          }}
+                          style={{
+                            padding: '4px',
+                            fontSize: '11px',
+                            background: 'transparent',
+                            border: '1px solid var(--border)',
+                            borderRadius: '4px',
+                            color: 'var(--text-secondary)',
+                            cursor: 'pointer',
+                            transition: 'all 0.2s ease',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            flexShrink: 0,
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.background = 'var(--hover-bg)';
+                            e.currentTarget.style.color = 'var(--primary)';
+                            e.currentTarget.style.borderColor = 'var(--primary)';
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.background = 'transparent';
+                            e.currentTarget.style.color = 'var(--text-secondary)';
+                            e.currentTarget.style.borderColor = 'var(--border)';
+                          }}
+                          title="View data for this experiment"
+                        >
+                          <Eye size={12} />
+                        </button>
                       </div>
                       <div style={{
                         fontSize: '13px',

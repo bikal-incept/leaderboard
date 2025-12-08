@@ -202,9 +202,78 @@ Both queries are optimized with:
 1. **Individual Question Scores**: Fetch detailed question-level data for score distribution plot
 2. **Drill-down**: Click on difficulty level to see individual questions
 3. **Export**: Download experiment report as CSV/PDF
-4. **Comparison**: Compare multiple experiments side-by-side
-5. **Caching**: Cache recent experiment reports for faster loading
+4. ~~**Comparison**: Compare up to 4 experiments side-by-side~~ ✅ **IMPLEMENTED** (See Compare Reports Feature below)
+5. ~~**Caching**: Cache up to 4 recent experiment reports for faster loading~~ ✅ **IMPLEMENTED**
 6. **Materialized View**: Create pre-aggregated experiment stats for even faster queries
+
+---
+
+## Compare Reports Feature
+
+### Overview
+A new comparison feature has been added that allows users to compare up to 3 cached experiment reports side-by-side. The comparison includes:
+- Latency metrics (TTFT and Total Generation Time)
+- Performance across difficulties
+- Evaluator scores distribution plots
+
+### Implementation Details
+
+#### New Page: `/compare`
+- **Route**: `src/pages/CompareReports.tsx`
+- **Navigation**: Added to sidebar with GitCompare icon
+- **Cache Management**: Uses localStorage with a maximum of 4 cached reports
+
+#### Features
+
+1. **Cache Selection Interface**
+   - Displays all cached experiment reports (max 4)
+   - Shows experiment metadata: tracker ID, subject, grade level, question type, and timestamp
+   - Visual selection indicator with colored borders
+   - Delete button for removing unwanted cached reports
+
+2. **Latency Comparison**
+   - Side-by-side comparison of Time to First Token (TTFT)
+   - Side-by-side comparison of Total Generation Time
+   - Shows P50 (median) and P90 percentiles for each difficulty level
+   - All times converted from milliseconds to seconds for readability
+
+3. **Performance Across Difficulties**
+   - Success rate percentage for each report at Easy, Medium, and Hard levels
+   - Color-coded success rates (green ≥90%, yellow ≥70%, red <70%)
+   - Question counts (above threshold / total)
+
+4. **Evaluator Scores Distribution**
+   - Bar charts showing score distribution (0-10) for each report
+   - Separate visualizations for Easy, Medium, and Hard difficulties
+   - Average score displayed for each report and difficulty
+   - Interactive hover tooltips showing exact counts
+
+### User Flow
+
+1. User visits Evaluations page and views experiment reports
+2. Reports are automatically cached (up to 3 most recent)
+3. User navigates to Compare page via sidebar
+4. User selects 2-3 reports to compare
+5. Comparison tables and charts are displayed
+6. User can delete unwanted cached reports
+
+### Technical Details
+
+- **Cache Storage**: localStorage with key `experiment_reports_cache`
+- **Max Cached Items**: 4 reports (configurable via `MAX_CACHE_ITEMS`)
+- **Max Compare Items**: 4 reports (configurable via `MAX_COMPARE_ITEMS`)
+- **Cache Data Structure**: Includes `reportData`, `summaryData`, and `scoresData`
+- **Automatic Cleanup**: Old/invalid cache entries are filtered on load
+
+### UI/UX Enhancements
+
+- Modern gradient-based selection highlighting
+- Responsive layout with overflow handling
+- Color-coded performance indicators
+- Hover effects and tooltips
+- Empty states with helpful guidance
+- Delete confirmation via hover state change
+
 
 
 

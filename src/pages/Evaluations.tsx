@@ -43,7 +43,7 @@ type CachedExperimentReport = {
 
 // Cache management functions
 const CACHE_KEY = 'experiment_reports_cache';
-const MAX_CACHE_ITEMS = 3;
+const MAX_CACHE_ITEMS = 4;
 
 const getCacheKey = (filters: { experiment_tracker: string; subject: string; grade_level: string; question_type: string }) => {
   return `${filters.experiment_tracker}|${filters.subject}|${filters.grade_level}|${filters.question_type}`;
@@ -59,11 +59,8 @@ const loadCache = (): CachedExperimentReport[] => {
     // Validate, filter out invalid entries, and strip any heavy fields
     const cleaned: CachedExperimentReport[] = parsed
       .filter((item: any) => {
-        // Must have the data fields (new cache format)
-        return item.reportData !== undefined && 
-               item.summaryData !== undefined && 
-               item.scoresData !== undefined &&
-               item.experiment_tracker;
+        // Must have an experiment id and reportData array (can be empty)
+        return item.experiment_tracker && item.reportData !== undefined;
       })
       .map((item: any) => {
         const safeScores: ExperimentScoreRow[] = Array.isArray(item.scoresData)
@@ -96,6 +93,12 @@ const saveToCache = (
   summaryData: ExperimentSummary | null,
   scoresData: ExperimentScoreRow[]
 ) => {
+  // Validate that we have essential data before caching
+  if (!reportData || reportData.length === 0) {
+    console.warn('[Cache] Skipping cache - no report data available');
+    return;
+  }
+
   try {
     const cache = loadCache();
     const cacheKey = getCacheKey(filters);
@@ -104,20 +107,64 @@ const saveToCache = (
     const filteredCache = cache.filter(item => getCacheKey(item) !== cacheKey);
     
     // Add new entry at the beginning with all data
-    const newCache = [
-      { 
-        ...filters, 
-        timestamp: Date.now(),
-        reportData,
-        summaryData,
-        scoresData,
-      },
-      ...filteredCache
-    ].slice(0, MAX_CACHE_ITEMS);
+    const newEntry = { 
+      ...filters, 
+      timestamp: Date.now(),
+      reportData,
+      summaryData,
+      scoresData,
+    };
     
-    localStorage.setItem(CACHE_KEY, JSON.stringify(newCache));
+    const newCache = [newEntry, ...filteredCache].slice(0, MAX_CACHE_ITEMS);
+    
+    // Try to save to localStorage
+    try {
+      localStorage.setItem(CACHE_KEY, JSON.stringify(newCache));
+      console.log('[Evaluations Cache] Successfully saved report to cache');
+      console.log('[Evaluations Cache] Cache now contains', newCache.length, 'items');
+      console.log('[Evaluations Cache] New entry:', {
+        experiment_tracker: newEntry.experiment_tracker,
+        subject: newEntry.subject,
+        grade_level: newEntry.grade_level,
+        question_type: newEntry.question_type,
+        reportDataLength: newEntry.reportData?.length,
+        scoresDataLength: newEntry.scoresData?.length,
+      });
+    } catch (quotaError: any) {
+      if (quotaError.name === 'QuotaExceededError') {
+        console.warn('[Cache] Quota exceeded, attempting LRU eviction...');
+        
+        // LRU eviction: Remove oldest item and try again
+        if (filteredCache.length > 0) {
+          // Remove the oldest (last) item
+          const reducedCache = [newEntry, ...filteredCache.slice(0, -1)];
+          
+          try {
+            localStorage.setItem(CACHE_KEY, JSON.stringify(reducedCache));
+            console.log('[Cache] Successfully saved after removing oldest item');
+          } catch (secondError: any) {
+            // If still failing, try with even fewer items
+            if (reducedCache.length > 1) {
+              const minimalCache = [newEntry];
+              try {
+                localStorage.setItem(CACHE_KEY, JSON.stringify(minimalCache));
+                console.log('[Cache] Saved with minimal cache (1 item)');
+              } catch (finalError) {
+                console.error('[Cache] Failed to save even with minimal cache. Data may be too large.', finalError);
+              }
+            } else {
+              console.error('[Cache] Single item too large for localStorage', secondError);
+            }
+          }
+        } else {
+          console.error('[Cache] Cannot save - single report exceeds localStorage quota');
+        }
+      } else {
+        throw quotaError;
+      }
+    }
   } catch (err) {
-    console.error('Failed to save to cache', err);
+    console.error('[Cache] Failed to save to cache', err);
   }
 };
 

@@ -4,6 +4,7 @@ import Layout from './components/Layout';
 import Benchmarks from './pages/Benchmarks';
 import Evaluations from './pages/Evaluations';
 import LookAtData from './pages/LookAtData';
+import CompareReports from './pages/CompareReports';
 
 function App() {
   return (
@@ -13,6 +14,7 @@ function App() {
           <Route index element={<Navigate to="/leaderboards" replace />} />
           <Route path="leaderboards" element={<Benchmarks />} />
           <Route path="evaluations" element={<Evaluations />} />
+          <Route path="compare" element={<CompareReports />} />
           <Route path="look-at-data" element={<LookAtData />} />
         </Route>
       </Routes>
