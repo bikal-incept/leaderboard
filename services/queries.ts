@@ -308,7 +308,6 @@ export const EXPERIMENT_SCORES = `
     gq.id AS question_id,
     qr.recipe_id,
     aer.evaluator_score,
-    aer.evaluator_parsed_response,
     COALESCE(
       gq.model_parsed_response->>'difficulty',
       gq.inference_params->'item_inference_params'->>'target_difficulty',

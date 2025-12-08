@@ -35,7 +35,7 @@ type CachedEvaluations = {
 
 // Cache management functions
 const EVAL_CACHE_KEY = 'evaluations_cache';
-const MAX_EVAL_CACHE_ITEMS = 10;
+const MAX_EVAL_CACHE_ITEMS = 3;
 
 const getEvalCacheKey = (filters: { 
   experiment_tracker: string; 
@@ -55,11 +55,25 @@ const loadEvalCache = (): CachedEvaluations[] => {
     
     const parsed = JSON.parse(cached);
     
-    // Validate and filter out invalid cache entries
-    return parsed.filter((item: any) => {
-      return item.evaluationsData !== undefined && 
-             item.experiment_tracker;
-    });
+    // Validate, normalise, and keep only valid entries
+    const cleaned: CachedEvaluations[] = parsed
+      .filter((item: any) => {
+        return item.evaluationsData !== undefined && item.experiment_tracker;
+      })
+      .map((item: any) => ({
+        experiment_tracker: String(item.experiment_tracker),
+        subject: String(item.subject ?? ''),
+        grade_level: String(item.grade_level ?? ''),
+        question_type: String(item.question_type ?? ''),
+        difficulty: String(item.difficulty ?? ''),
+        max_score: String(item.max_score ?? '0.85'),
+        timestamp: Number(item.timestamp ?? 0),
+        evaluationsData: Array.isArray(item.evaluationsData) ? item.evaluationsData : [],
+      }));
+
+    // Sort by most recent first and keep only the most recent N items
+    cleaned.sort((a, b) => (b.timestamp ?? 0) - (a.timestamp ?? 0));
+    return cleaned.slice(0, MAX_EVAL_CACHE_ITEMS);
   } catch (err) {
     console.error('Failed to load evaluations cache', err);
     return [];
@@ -865,6 +879,7 @@ const LookAtData: React.FC = () => {
   
   // Modal state
   const [modalContent, setModalContent] = useState<{ type: 'response' | 'prompt' | 'feedback'; data: any } | null>(null);
+  const [summaryDifficulty, setSummaryDifficulty] = useState<string | null>(null);
 
   // Get current filters from URL/context - simplified for standalone page
   const [selectedSubject, setSelectedSubject] = useState<string>('math');
@@ -882,6 +897,15 @@ const LookAtData: React.FC = () => {
     const cachedData = loadEvalCache();
     console.log('[Eval Cache] Loaded cache on mount:', cachedData.length, 'entries');
     setCachedEvaluations(cachedData);
+
+    // Persist cleaned / truncated cache back to localStorage
+    if (cachedData.length > 0) {
+      try {
+        localStorage.setItem(EVAL_CACHE_KEY, JSON.stringify(cachedData));
+      } catch (err) {
+        console.error('[Eval Cache] Failed to save cleaned cache', err);
+      }
+    }
   }, []);
 
   // Close dropdown when clicking outside
@@ -1539,7 +1563,7 @@ const LookAtData: React.FC = () => {
                     border: '1px solid var(--border)',
                     borderRadius: '8px',
                   }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', gap: '12px' }}>
                       <h3 style={{
                         fontSize: '14px',
                         fontWeight: '600',
@@ -1548,6 +1572,32 @@ const LookAtData: React.FC = () => {
                       }}>
                         {difficulty} ({difficultyData.length} evaluations)
                       </h3>
+                      <button
+                        onClick={() => setSummaryDifficulty(difficulty)}
+                        style={{
+                          padding: '6px 10px',
+                          fontSize: '11px',
+                          fontWeight: 600,
+                          borderRadius: '999px',
+                          border: '1px solid var(--border)',
+                          background: 'rgba(37, 99, 235, 0.05)',
+                          color: 'var(--primary)',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          whiteSpace: 'nowrap',
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.background = 'rgba(37, 99, 235, 0.12)';
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.background = 'rgba(37, 99, 235, 0.05)';
+                        }}
+                      >
+                        <MessageSquare size={12} />
+                        <span>View Suggested Feedback</span>
+                      </button>
                     </div>
 
                     {/* Section Tabs for this difficulty */}
@@ -1985,6 +2035,15 @@ const LookAtData: React.FC = () => {
         </div>
       )}
 
+      {/* Difficulty-wide Suggested Feedback Summary Modal */}
+      {summaryDifficulty && (
+        <DifficultySummaryModal
+          difficulty={summaryDifficulty}
+          evaluations={evaluations}
+          onClose={() => setSummaryDifficulty(null)}
+        />
+      )}
+
       {/* Evaluation Detail Modal */}
       {selectedEvaluation && (
         <EvaluationModal 
@@ -1992,6 +2051,179 @@ const LookAtData: React.FC = () => {
           onClose={() => setSelectedEvaluation(null)}
         />
       )}
+    </div>
+  );
+};
+
+// Modal summarizing suggested feedback across all evaluations for a difficulty
+const DifficultySummaryModal: React.FC<{
+  difficulty: string;
+  evaluations: EvaluationData[];
+  onClose: () => void;
+}> = ({ difficulty, evaluations, onClose }) => {
+  const difficultyLabel = difficulty.charAt(0).toUpperCase() + difficulty.slice(1).toLowerCase();
+
+  // Aggregate suggested improvements from evaluator_parsed_response for this difficulty
+  const aggregatedSuggestions = React.useMemo(() => {
+    const suggestions: Array<{ text: string; count: number; questionIds: number[] }> = [];
+
+    evaluations.forEach((item) => {
+      if (item.difficulty?.toLowerCase() !== difficulty.toLowerCase()) return;
+      if (item.evaluator_score >= 0.85) return; // Focus on failing / below-threshold items
+
+      const evalResponse = item.evaluator_parsed_response;
+      if (!evalResponse || !evalResponse.evaluations) return;
+
+      const evalData = Object.values(evalResponse.evaluations)[0] as any;
+      if (!evalData || !evalData.ti_question_qa?.suggested_improvements) return;
+
+      evalData.ti_question_qa.suggested_improvements.forEach((improvement: string) => {
+        const existing = suggestions.find((s) => s.text === improvement);
+        if (existing) {
+          existing.count += 1;
+          existing.questionIds.push(item.question_id);
+        } else {
+          suggestions.push({ text: improvement, count: 1, questionIds: [item.question_id] });
+        }
+      });
+    });
+
+    suggestions.sort((a, b) => b.count - a.count);
+    return suggestions;
+  }, [difficulty, evaluations]);
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        background: 'rgba(0, 0, 0, 0.75)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 1100,
+        padding: '20px',
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: 'var(--card-bg)',
+          borderRadius: '16px',
+          border: '1px solid var(--border)',
+          maxWidth: '900px',
+          width: '100%',
+          maxHeight: '90vh',
+          overflow: 'auto',
+        }}
+      >
+        {/* Header */}
+        <div
+          style={{
+            padding: '20px 24px',
+            borderBottom: '1px solid var(--border)',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+          }}
+        >
+          <div>
+            <h3 style={{ fontSize: '18px', fontWeight: 600, marginBottom: '4px', display: 'flex', gap: '8px', alignItems: 'center' }}>
+              <MessageSquare size={18} color="var(--primary)" />
+              {difficultyLabel} – Suggested Feedback Summary
+            </h3>
+            <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0 }}>
+              Aggregated suggested improvements across all evaluations for this difficulty (score &lt; 0.85).
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            style={{
+              all: 'unset',
+              cursor: 'pointer',
+              padding: '8px',
+              borderRadius: '8px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: 'var(--text-secondary)',
+              transition: 'all 0.2s ease',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = 'rgba(255, 255, 255, 0.05)';
+              e.currentTarget.style.color = 'var(--text)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = 'transparent';
+              e.currentTarget.style.color = 'var(--text-secondary)';
+            }}
+          >
+            <X size={20} />
+          </button>
+        </div>
+
+        {/* Content */}
+        <div style={{ padding: '20px 24px' }}>
+          {aggregatedSuggestions.length === 0 ? (
+            <div
+              style={{
+                padding: '32px',
+                textAlign: 'center',
+                color: 'var(--text-secondary)',
+                background: 'var(--surface)',
+                borderRadius: '12px',
+                border: '1px solid var(--border)',
+              }}
+            >
+              No suggested feedback found for {difficultyLabel} difficulty (below threshold).
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              {aggregatedSuggestions.map((item, idx) => (
+                <div
+                  key={idx}
+                  style={{
+                    padding: '12px 16px',
+                    borderRadius: '10px',
+                    border: '1px solid rgba(59,130,246,0.35)',
+                    background: 'rgba(37,99,235,0.05)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '6px',
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
+                    <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text)' }}>
+                      {item.text}
+                    </span>
+                    <span
+                      style={{
+                        padding: '4px 10px',
+                        borderRadius: '999px',
+                        background: 'rgba(37,99,235,0.15)',
+                        color: 'var(--primary)',
+                        fontSize: '11px',
+                        fontWeight: 700,
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {item.count}x
+                    </span>
+                  </div>
+                  <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+                    Question IDs: {item.questionIds.slice(0, 10).join(', ')}
+                    {item.questionIds.length > 10 && ' …'}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 };

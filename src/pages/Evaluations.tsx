@@ -17,10 +17,16 @@ import {
   X,
   Trash2,
   Globe,
-  AlertCircle,
-  TrendingDown,
 } from 'lucide-react';
 import { mockEvaluations } from '../data/mockEvaluations';
+
+// Lightweight per-question score row for experiment score distributions
+type ExperimentScoreRow = {
+  question_id: number;
+  recipe_id: number;
+  evaluator_score: number;
+  difficulty: string;
+};
 
 // Type for cached experiment report with data
 type CachedExperimentReport = {
@@ -32,17 +38,12 @@ type CachedExperimentReport = {
   // Cached data
   reportData: ExperimentReportRow[];
   summaryData: ExperimentSummary | null;
-  scoresData: Array<{
-    question_id: number;
-    recipe_id: number;
-    evaluator_score: number;
-    difficulty: string;
-  }>;
+  scoresData: ExperimentScoreRow[];
 };
 
 // Cache management functions
 const CACHE_KEY = 'experiment_reports_cache';
-const MAX_CACHE_ITEMS = 10;
+const MAX_CACHE_ITEMS = 3;
 
 const getCacheKey = (filters: { experiment_tracker: string; subject: string; grade_level: string; question_type: string }) => {
   return `${filters.experiment_tracker}|${filters.subject}|${filters.grade_level}|${filters.question_type}`;
@@ -55,14 +56,34 @@ const loadCache = (): CachedExperimentReport[] => {
     
     const parsed = JSON.parse(cached);
     
-    // Validate and filter out invalid cache entries
-    return parsed.filter((item: any) => {
-      // Must have the data fields (new cache format)
-      return item.reportData !== undefined && 
-             item.summaryData !== undefined && 
-             item.scoresData !== undefined &&
-             item.experiment_tracker;
-    });
+    // Validate, filter out invalid entries, and strip any heavy fields
+    const cleaned: CachedExperimentReport[] = parsed
+      .filter((item: any) => {
+        // Must have the data fields (new cache format)
+        return item.reportData !== undefined && 
+               item.summaryData !== undefined && 
+               item.scoresData !== undefined &&
+               item.experiment_tracker;
+      })
+      .map((item: any) => {
+        const safeScores: ExperimentScoreRow[] = Array.isArray(item.scoresData)
+          ? item.scoresData.map((s: any) => ({
+              question_id: Number(s.question_id),
+              recipe_id: Number(s.recipe_id),
+              evaluator_score: Number(s.evaluator_score),
+              difficulty: String(s.difficulty ?? ''),
+            }))
+          : [];
+
+        return {
+          ...item,
+          scoresData: safeScores,
+        } as CachedExperimentReport;
+      });
+
+    // Sort by most recent first and keep only the most recent N items
+    cleaned.sort((a, b) => (b.timestamp ?? 0) - (a.timestamp ?? 0));
+    return cleaned.slice(0, MAX_CACHE_ITEMS);
   } catch (err) {
     console.error('Failed to load cache', err);
     return [];
@@ -73,7 +94,7 @@ const saveToCache = (
   filters: { experiment_tracker: string; subject: string; grade_level: string; question_type: string },
   reportData: ExperimentReportRow[],
   summaryData: ExperimentSummary | null,
-  scoresData: Array<{ question_id: number; recipe_id: number; evaluator_score: number; difficulty: string }>
+  scoresData: ExperimentScoreRow[]
 ) => {
   try {
     const cache = loadCache();
@@ -176,12 +197,7 @@ const Evaluations: React.FC = () => {
   // API data states
   const [experimentReport, setExperimentReport] = useState<ExperimentReportRow[]>([]);
   const [experimentSummary, setExperimentSummary] = useState<ExperimentSummary | null>(null);
-  const [experimentScores, setExperimentScores] = useState<{
-    question_id: number;
-    recipe_id: number;
-    evaluator_score: number;
-    difficulty: string;
-  }[]>([]);
+  const [experimentScores, setExperimentScores] = useState<ExperimentScoreRow[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   
@@ -236,18 +252,12 @@ const Evaluations: React.FC = () => {
     '70837201-7f10-40b2-bae0-5d3ac0642ffc': 'GPT-OSS 120B Vanilla + RAG',
   };
   
-  // Modal state
+  // Modal state (for per-sample drill-down, not aggregated feedback)
   const [selectedSample, setSelectedSample] = useState<{
     experimentId: string;
     evalKey: string;
     evalData: any;
   } | null>(null);
-  
-  // Aggregated feedback modal state
-  const [showAggregatedFeedback, setShowAggregatedFeedback] = useState(false);
-  
-  // Difficulty-specific feedback modal state
-  const [selectedDifficultyFeedback, setSelectedDifficultyFeedback] = useState<'Easy' | 'Medium' | 'Hard' | null>(null);
   
   // Filter state for samples view
   const [filters, setFilters] = useState({
@@ -591,11 +601,11 @@ const Evaluations: React.FC = () => {
   // Calculate all scores for distribution plot
   const allScoresData = useMemo(() => {
     if (experimentScores && experimentScores.length > 0) {
-      // Use real data from API - return full objects
+      // Use real data from API - return full score objects
       return experimentScores;
     } else if (!experimentReport || experimentReport.length === 0) {
       // Fall back to mock data - convert to compatible format
-      const scores: { question_id: number; recipe_id: number; evaluator_score: number; difficulty: string }[] = [];
+      const scores: ExperimentScoreRow[] = [];
       experiments.forEach((exp, expIdx) => {
         Object.entries(exp.evaluations).forEach(([evalKey, evalData], idx) => {
           const tags = deriveTagsFromKey(evalKey);
@@ -1040,41 +1050,6 @@ const Evaluations: React.FC = () => {
         </div>
       )}
 
-      {/* Analyze All Feedback Button */}
-      {!isLoading && selectedExperiment && allScoresData && allScoresData.length > 0 && (
-        <div style={{ marginBottom: '24px', display: 'flex', justifyContent: 'center' }}>
-          <button
-            onClick={() => setShowAggregatedFeedback(true)}
-            style={{
-              padding: '14px 32px',
-              fontSize: '14px',
-              fontWeight: '600',
-              background: 'linear-gradient(135deg, rgba(239, 68, 68, 0.15), rgba(220, 38, 38, 0.1))',
-              border: '1px solid rgba(239, 68, 68, 0.4)',
-              borderRadius: '10px',
-              color: 'var(--error)',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '10px',
-              transition: 'all 0.2s ease',
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.transform = 'translateY(-2px)';
-              e.currentTarget.style.boxShadow = '0 4px 16px rgba(239, 68, 68, 0.25)';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.transform = 'translateY(0)';
-              e.currentTarget.style.boxShadow = 'none';
-            }}
-          >
-            <TrendingDown size={18} />
-            <span>View All Issues, Failures & Suggested Improvements</span>
-            <AlertCircle size={16} />
-          </button>
-        </div>
-      )}
-
       {/* Latency Report + Performance by Difficulty (same row) */}
       {!isLoading && selectedExperiment && experimentReport && experimentReport.length > 0 && (
         <div
@@ -1150,40 +1125,18 @@ const Evaluations: React.FC = () => {
 
             {/* Easy Row */}
             <div>
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: '1.2fr 1fr 1fr 1fr',
-                  gap: '12px',
-                  padding: '10px 12px',
-                  borderBottom: '1px solid rgba(255,255,255,0.05)',
-                  color: 'var(--text)',
-                }}
-              >
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: '1.2fr 1fr 1fr 1fr',
+                gap: '12px',
+                padding: '10px 12px',
+                borderBottom: '1px solid rgba(255,255,255,0.05)',
+                color: 'var(--text)',
+              }}
+            >
                 <div style={{ color: 'var(--success)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px' }}>
                   Easy ({statsByDifficulty.Easy.total} Evaluations)
-                  <button
-                    onClick={() => setSelectedDifficultyFeedback('Easy')}
-                    style={{
-                      padding: '4px 8px',
-                      fontSize: '10px',
-                      fontWeight: 600,
-                      background: 'rgba(245, 158, 11, 0.15)',
-                      border: '1px solid rgba(245, 158, 11, 0.3)',
-                      borderRadius: '4px',
-                      color: 'var(--warning)',
-                      cursor: 'pointer',
-                      transition: 'all 0.2s ease',
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.background = 'rgba(245, 158, 11, 0.25)';
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.background = 'rgba(245, 158, 11, 0.15)';
-                    }}
-                  >
-                    View Issues
-                  </button>
                 </div>
                 <div style={{ textAlign: 'right' }}>{statsByDifficulty.Easy.total}</div>
                 <div style={{ textAlign: 'right' }}>{statsByDifficulty.Easy.passed}</div>
@@ -1226,28 +1179,6 @@ const Evaluations: React.FC = () => {
               >
                 <div style={{ color: 'var(--warning)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px' }}>
                   Medium ({statsByDifficulty.Medium.total} Evaluations)
-                  <button
-                    onClick={() => setSelectedDifficultyFeedback('Medium')}
-                    style={{
-                      padding: '4px 8px',
-                      fontSize: '10px',
-                      fontWeight: 600,
-                      background: 'rgba(245, 158, 11, 0.15)',
-                      border: '1px solid rgba(245, 158, 11, 0.3)',
-                      borderRadius: '4px',
-                      color: 'var(--warning)',
-                      cursor: 'pointer',
-                      transition: 'all 0.2s ease',
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.background = 'rgba(245, 158, 11, 0.25)';
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.background = 'rgba(245, 158, 11, 0.15)';
-                    }}
-                  >
-                    View Issues
-                  </button>
                 </div>
                 <div style={{ textAlign: 'right' }}>{statsByDifficulty.Medium.total}</div>
                 <div style={{ textAlign: 'right' }}>{statsByDifficulty.Medium.passed}</div>
@@ -1290,28 +1221,6 @@ const Evaluations: React.FC = () => {
               >
                 <div style={{ color: 'var(--error)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px' }}>
                   Hard ({statsByDifficulty.Hard.total} Evaluations)
-                  <button
-                    onClick={() => setSelectedDifficultyFeedback('Hard')}
-                    style={{
-                      padding: '4px 8px',
-                      fontSize: '10px',
-                      fontWeight: 600,
-                      background: 'rgba(245, 158, 11, 0.15)',
-                      border: '1px solid rgba(245, 158, 11, 0.3)',
-                      borderRadius: '4px',
-                      color: 'var(--warning)',
-                      cursor: 'pointer',
-                      transition: 'all 0.2s ease',
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.background = 'rgba(245, 158, 11, 0.25)';
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.background = 'rgba(245, 158, 11, 0.15)';
-                    }}
-                  >
-                    View Issues
-                  </button>
                 </div>
                 <div style={{ textAlign: 'right' }}>{statsByDifficulty.Hard.total}</div>
                 <div style={{ textAlign: 'right' }}>{statsByDifficulty.Hard.passed}</div>
@@ -1877,185 +1786,6 @@ const Evaluations: React.FC = () => {
                   </div>
                 );
               })()}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Difficulty-Specific Feedback Modal */}
-      {selectedDifficultyFeedback && allScoresData && (
-        <div
-          onClick={() => setSelectedDifficultyFeedback(null)}
-          style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            background: 'rgba(0, 0, 0, 0.75)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 9999,
-            padding: '20px',
-          }}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              background: 'var(--card-bg)',
-              borderRadius: '16px',
-              border: '1px solid var(--border)',
-              maxWidth: '1200px',
-              width: '100%',
-              maxHeight: '90vh',
-              overflow: 'auto',
-              position: 'relative',
-            }}
-          >
-            {/* Modal Header */}
-            <div
-              style={{
-                position: 'sticky',
-                top: 0,
-                background: 'var(--card-bg)',
-                borderBottom: '1px solid var(--border)',
-                padding: '20px 24px',
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                zIndex: 10,
-              }}
-            >
-              <div>
-                <h3 style={{ fontSize: '20px', fontWeight: 700, marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '12px' }}>
-                  <AlertTriangle size={24} color="var(--warning)" />
-                  {selectedDifficultyFeedback} - Suggested Improvements & Failures
-                </h3>
-                <p style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
-                  Improvements and failures for {selectedDifficultyFeedback} difficulty evaluations
-                </p>
-              </div>
-              <button
-                onClick={() => setSelectedDifficultyFeedback(null)}
-                style={{
-                  all: 'unset',
-                  cursor: 'pointer',
-                  padding: '8px',
-                  borderRadius: '8px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  color: 'var(--text-secondary)',
-                  transition: 'all 0.2s ease',
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = 'rgba(255, 255, 255, 0.05)';
-                  e.currentTarget.style.color = 'var(--text)';
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = 'transparent';
-                  e.currentTarget.style.color = 'var(--text-secondary)';
-                }}
-              >
-                <X size={24} />
-              </button>
-            </div>
-
-            {/* Modal Content */}
-            <div style={{ padding: '24px' }}>
-              <DifficultyFeedbackContent 
-                scoresData={allScoresData.filter(item => item.difficulty === selectedDifficultyFeedback)} 
-                difficulty={selectedDifficultyFeedback}
-              />
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Aggregated Feedback Modal */}
-      {showAggregatedFeedback && allScoresData && (
-        <div
-          onClick={() => setShowAggregatedFeedback(false)}
-          style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            background: 'rgba(0, 0, 0, 0.75)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 9999,
-            padding: '20px',
-          }}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              background: 'var(--card-bg)',
-              borderRadius: '16px',
-              border: '1px solid var(--border)',
-              maxWidth: '1400px',
-              width: '100%',
-              maxHeight: '90vh',
-              overflow: 'auto',
-              position: 'relative',
-            }}
-          >
-            {/* Modal Header */}
-            <div
-              style={{
-                position: 'sticky',
-                top: 0,
-                background: 'var(--card-bg)',
-                borderBottom: '1px solid var(--border)',
-                padding: '20px 24px',
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                zIndex: 10,
-              }}
-            >
-              <div>
-                <h3 style={{ fontSize: '20px', fontWeight: 700, marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '12px' }}>
-                  <TrendingDown size={24} color="var(--error)" />
-                  Aggregated Failures & Feedback Analysis
-                </h3>
-                <p style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
-                  All issues, failures, and suggested improvements across {allScoresData.length} evaluations
-                </p>
-              </div>
-              <button
-                onClick={() => setShowAggregatedFeedback(false)}
-                style={{
-                  all: 'unset',
-                  cursor: 'pointer',
-                  padding: '8px',
-                  borderRadius: '8px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  color: 'var(--text-secondary)',
-                  transition: 'all 0.2s ease',
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = 'rgba(255, 255, 255, 0.05)';
-                  e.currentTarget.style.color = 'var(--text)';
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = 'transparent';
-                  e.currentTarget.style.color = 'var(--text-secondary)';
-                }}
-              >
-                <X size={24} />
-              </button>
-            </div>
-
-            {/* Modal Content */}
-            <div style={{ padding: '24px' }}>
-              <AggregatedFeedbackContent scoresData={allScoresData} />
             </div>
           </div>
         </div>
