@@ -16,15 +16,15 @@ const Benchmarks: React.FC = () => {
   const [selectedSubject, setSelectedSubject] = useState<Subject>('ela');
 
   // Applied filter states (actually used for fetching data)
-  // Default to empty/null for ELA to show all examples
+  // Default to 60 questions for ELA
   const [appliedGradeLevel, setAppliedGradeLevel] = useState<string>('');
   const [appliedQuestionType, setAppliedQuestionType] = useState<string>('');
-  const [appliedMinTotalQuestions, setAppliedMinTotalQuestions] = useState<number>(0);
+  const [appliedMinTotalQuestions, setAppliedMinTotalQuestions] = useState<number>(60);
 
   // Pending filter states (user selection before applying)
   const [gradeLevel, setGradeLevel] = useState<string>('');
   const [questionType, setQuestionType] = useState<string>('');
-  const [minTotalQuestions, setMinTotalQuestions] = useState<number>(0);
+  const [minTotalQuestions, setMinTotalQuestions] = useState<number>(60);
 
   const [leaderboardRows, setLeaderboardRows] = useState<LeaderboardRow[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -866,13 +866,13 @@ const Benchmarks: React.FC = () => {
           <button
             onClick={() => {
               setSelectedSubject('ela');
-              // Reset to ELA defaults (show all)
+              // Reset to ELA defaults (60 questions minimum)
               setGradeLevel('');
               setQuestionType('');
-              setMinTotalQuestions(0);
+              setMinTotalQuestions(60);
               setAppliedGradeLevel('');
               setAppliedQuestionType('');
-              setAppliedMinTotalQuestions(0);
+              setAppliedMinTotalQuestions(60);
             }}
             style={{
               padding: '12px 24px',
@@ -1163,10 +1163,10 @@ const Benchmarks: React.FC = () => {
               if (selectedSubject === 'ela') {
                 setGradeLevel('');
                 setQuestionType('');
-                setMinTotalQuestions(0);
+                setMinTotalQuestions(60);
                 setAppliedGradeLevel('');
                 setAppliedQuestionType('');
-                setAppliedMinTotalQuestions(0);
+                setAppliedMinTotalQuestions(60);
               } else {
                 setGradeLevel('3');
                 setQuestionType('mcq');
