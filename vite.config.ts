@@ -31,30 +31,54 @@ const apiPlugin = (): Plugin => ({
 
         // Handle /api/leaderboard
         if (req.url.startsWith('/api/leaderboard')) {
-          const subject = (url.searchParams.get('subject') ?? 'ela').toLowerCase();
-          const gradeLevel = url.searchParams.get('grade_level') || null;
-          const questionType = url.searchParams.get('question_type') || null;
-          const minTotalQuestions = url.searchParams.get('min_total_questions');
-          const minTotalQuestionsInt = minTotalQuestions ? parseInt(minTotalQuestions, 10) : null;
-          const evaluatorVersion = url.searchParams.get('evaluator_version') || '2.0.0';
+          try {
+            const subject = (url.searchParams.get('subject') ?? 'ela').toLowerCase();
+            const gradeLevel = url.searchParams.get('grade_level') || null;
+            const questionType = url.searchParams.get('question_type') || null;
+            const minTotalQuestions = url.searchParams.get('min_total_questions');
+            const minTotalQuestionsInt = minTotalQuestions ? parseInt(minTotalQuestions, 10) : null;
+            const evaluatorVersion = url.searchParams.get('evaluator_version') || '2.0.0';
 
-          // Use the appropriate materialized view based on evaluator version
-          // Default to 2.0.0 for new leaderboard
-          const queryToUse = evaluatorVersion === '1.5.4' ? LEADERBOARD_MV_1_5_4 : LEADERBOARD_MV_2_0_0;
-          
-          // Parameters: subject, grade_level, question_type, min_total_questions
-          // Convert empty strings to null for SQL query
-          const { rows } = await query(queryToUse, [
-            subject,
-            gradeLevel && gradeLevel.trim() !== '' ? gradeLevel : null,
-            questionType && questionType.trim() !== '' ? questionType : null,
-            minTotalQuestionsInt && minTotalQuestionsInt > 0 ? minTotalQuestionsInt : null
-          ]);
+            console.log('[API] /api/leaderboard request:', {
+              subject,
+              gradeLevel,
+              questionType,
+              minTotalQuestions: minTotalQuestionsInt,
+              evaluatorVersion
+            });
 
-          res.statusCode = 200;
-          res.setHeader('Content-Type', 'application/json');
-          res.end(JSON.stringify(rows));
-          return;
+            // Use the appropriate materialized view based on evaluator version
+            // Default to 2.0.0 for new leaderboard
+            const queryToUse = evaluatorVersion === '1.5.4' ? LEADERBOARD_MV_1_5_4 : LEADERBOARD_MV_2_0_0;
+            
+            console.log('[API] Using query:', evaluatorVersion === '1.5.4' ? 'LEADERBOARD_MV_1_5_4' : 'LEADERBOARD_MV_2_0_0');
+            
+            // Parameters: subject, grade_level, question_type, min_total_questions
+            // Convert empty strings to null for SQL query
+            const { rows } = await query(queryToUse, [
+              subject,
+              gradeLevel && gradeLevel.trim() !== '' ? gradeLevel : null,
+              questionType && questionType.trim() !== '' ? questionType : null,
+              minTotalQuestionsInt && minTotalQuestionsInt > 0 ? minTotalQuestionsInt : null
+            ]);
+
+            console.log('[API] Query returned', rows?.length || 0, 'rows');
+
+            res.statusCode = 200;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify(rows || []));
+            return;
+          } catch (err: any) {
+            console.error('[API] Error in /api/leaderboard:', err);
+            res.statusCode = 500;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({
+              error: 'Failed to load leaderboard data',
+              message: err.message,
+              stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
+            }));
+            return;
+          }
         }
 
         // Handle /api/experiment-report

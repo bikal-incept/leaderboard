@@ -185,6 +185,11 @@ const Benchmarks: React.FC = () => {
 
         if (isCancelled) return;
 
+        // Check if the response contains an error
+        if (rawData && typeof rawData === 'object' && 'error' in rawData) {
+          throw new Error(rawData.message || rawData.error || 'Unknown error from API');
+        }
+
         const normalized: LeaderboardRow[] = (rawData ?? []).map((row: any) => ({
           // Use experiment_tracker as the display name (what was previously called "model" in the UI)
           model: row.experiment_tracker ?? row.model,
@@ -213,7 +218,8 @@ const Benchmarks: React.FC = () => {
       } catch (err: any) {
         if (isCancelled) return;
         console.error('Failed to load leaderboard data', err);
-        setError('Failed to load leaderboard data. Please try again later.');
+        const errorMessage = err.message || 'Unknown error';
+        setError(`Failed to load leaderboard data: ${errorMessage}. Please check the console for details.`);
         setLeaderboardRows([]);
       } finally {
         if (!isCancelled) {
