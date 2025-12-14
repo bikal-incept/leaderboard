@@ -13,17 +13,18 @@ type SortConfig = {
 
 const Benchmarks: React.FC = () => {
   const navigate = useNavigate();
-  const [selectedSubject, setSelectedSubject] = useState<Subject>('math');
+  const [selectedSubject, setSelectedSubject] = useState<Subject>('ela');
 
   // Applied filter states (actually used for fetching data)
-  const [appliedGradeLevel, setAppliedGradeLevel] = useState<string>('3');
-  const [appliedQuestionType, setAppliedQuestionType] = useState<string>('mcq');
-  const [appliedMinTotalQuestions, setAppliedMinTotalQuestions] = useState<number>(120);
+  // Default to empty/null for ELA to show all examples
+  const [appliedGradeLevel, setAppliedGradeLevel] = useState<string>('');
+  const [appliedQuestionType, setAppliedQuestionType] = useState<string>('');
+  const [appliedMinTotalQuestions, setAppliedMinTotalQuestions] = useState<number>(0);
 
   // Pending filter states (user selection before applying)
-  const [gradeLevel, setGradeLevel] = useState<string>('3');
-  const [questionType, setQuestionType] = useState<string>('mcq');
-  const [minTotalQuestions, setMinTotalQuestions] = useState<number>(120);
+  const [gradeLevel, setGradeLevel] = useState<string>('');
+  const [questionType, setQuestionType] = useState<string>('');
+  const [minTotalQuestions, setMinTotalQuestions] = useState<number>(0);
 
   const [leaderboardRows, setLeaderboardRows] = useState<LeaderboardRow[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -150,9 +151,10 @@ const Benchmarks: React.FC = () => {
 
         const params = new URLSearchParams({
           subject: apiSubject,
+          evaluator_version: '2.0.0', // Use 2.0.0 evaluator version
           ...(appliedGradeLevel && { grade_level: appliedGradeLevel }),
           ...(appliedQuestionType && { question_type: appliedQuestionType }),
-          ...(appliedMinTotalQuestions && { min_total_questions: appliedMinTotalQuestions.toString() }),
+          ...(appliedMinTotalQuestions > 0 && { min_total_questions: appliedMinTotalQuestions.toString() }),
         });
 
         const response = await fetch(`/api/leaderboard?${params.toString()}`);
@@ -858,7 +860,13 @@ const Benchmarks: React.FC = () => {
           <button
             onClick={() => {
               setSelectedSubject('ela');
-              // Keep current filters when switching subjects
+              // Reset to ELA defaults (show all)
+              setGradeLevel('');
+              setQuestionType('');
+              setMinTotalQuestions(0);
+              setAppliedGradeLevel('');
+              setAppliedQuestionType('');
+              setAppliedMinTotalQuestions(0);
             }}
             style={{
               padding: '12px 24px',
@@ -1145,12 +1153,22 @@ const Benchmarks: React.FC = () => {
           {/* Reset Filters Button */}
           <button
             onClick={() => {
-              setGradeLevel('3');
-              setQuestionType('mcq');
-              setMinTotalQuestions(120);
-              setAppliedGradeLevel('3');
-              setAppliedQuestionType('mcq');
-              setAppliedMinTotalQuestions(120);
+              // Reset based on selected subject
+              if (selectedSubject === 'ela') {
+                setGradeLevel('');
+                setQuestionType('');
+                setMinTotalQuestions(0);
+                setAppliedGradeLevel('');
+                setAppliedQuestionType('');
+                setAppliedMinTotalQuestions(0);
+              } else {
+                setGradeLevel('3');
+                setQuestionType('mcq');
+                setMinTotalQuestions(120);
+                setAppliedGradeLevel('3');
+                setAppliedQuestionType('mcq');
+                setAppliedMinTotalQuestions(120);
+              }
             }}
             style={{
               padding: '8px 16px',

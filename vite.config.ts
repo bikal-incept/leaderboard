@@ -1,6 +1,6 @@
 import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
-import { LEADERBOARD_MV_1_5_4, EXPERIMENT_REPORT, EXPERIMENT_SUMMARY, EXPERIMENT_SCORES, FETCH_EVALUATIONS } from './services/queries';
+import { LEADERBOARD_MV_1_5_4, LEADERBOARD_MV_2_0_0, EXPERIMENT_REPORT, EXPERIMENT_SUMMARY, EXPERIMENT_SCORES, FETCH_EVALUATIONS } from './services/queries';
 import { query } from './services/db';
 
 /**
@@ -31,19 +31,24 @@ const apiPlugin = (): Plugin => ({
 
         // Handle /api/leaderboard
         if (req.url.startsWith('/api/leaderboard')) {
-          const subject = (url.searchParams.get('subject') ?? 'math').toLowerCase();
+          const subject = (url.searchParams.get('subject') ?? 'ela').toLowerCase();
           const gradeLevel = url.searchParams.get('grade_level') || null;
           const questionType = url.searchParams.get('question_type') || null;
           const minTotalQuestions = url.searchParams.get('min_total_questions');
           const minTotalQuestionsInt = minTotalQuestions ? parseInt(minTotalQuestions, 10) : null;
+          const evaluatorVersion = url.searchParams.get('evaluator_version') || '2.0.0';
 
-          // Using the fast materialized view for evaluator version 1.5.4
+          // Use the appropriate materialized view based on evaluator version
+          // Default to 2.0.0 for new leaderboard
+          const queryToUse = evaluatorVersion === '1.5.4' ? LEADERBOARD_MV_1_5_4 : LEADERBOARD_MV_2_0_0;
+          
           // Parameters: subject, grade_level, question_type, min_total_questions
-          const { rows } = await query(LEADERBOARD_MV_1_5_4, [
+          // Convert empty strings to null for SQL query
+          const { rows } = await query(queryToUse, [
             subject,
-            gradeLevel,
-            questionType,
-            minTotalQuestionsInt
+            gradeLevel && gradeLevel.trim() !== '' ? gradeLevel : null,
+            questionType && questionType.trim() !== '' ? questionType : null,
+            minTotalQuestionsInt && minTotalQuestionsInt > 0 ? minTotalQuestionsInt : null
           ]);
 
           res.statusCode = 200;
