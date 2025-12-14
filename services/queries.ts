@@ -246,7 +246,7 @@ export const EXPERIMENT_REPORT = `
   JOIN public.question_recipes AS qr
     ON gq.recipe_id = qr.recipe_id
   WHERE gq.experiment_tracker = $1
-    AND aer.evaluator_version = '1.5.4'
+    AND aer.evaluator_version = '2.0.0'
     AND ($2::text IS NULL OR LOWER(qr.subject) = LOWER($2))
     AND ($3::text IS NULL OR qr.grade_level = $3)
     AND ($4::text IS NULL OR LOWER(gq.question_type) = LOWER($4))
@@ -296,7 +296,7 @@ export const EXPERIMENT_SUMMARY = `
     JOIN public.question_recipes AS qr
       ON gq.recipe_id = qr.recipe_id
     WHERE gq.experiment_tracker = $1
-      AND aer.evaluator_version = '1.5.4'
+      AND aer.evaluator_version = '2.0.0'
       AND ($2::text IS NULL OR LOWER(qr.subject) = LOWER($2))
       AND ($3::text IS NULL OR qr.grade_level = $3)
       AND ($4::text IS NULL OR LOWER(gq.question_type) = LOWER($4))
@@ -369,7 +369,7 @@ export const EXPERIMENT_SCORES = `
   JOIN public.question_recipes AS qr
     ON gq.recipe_id = qr.recipe_id
   WHERE gq.experiment_tracker = $1
-    AND aer.evaluator_version = '1.5.4'
+    AND aer.evaluator_version = '2.0.0'
     AND ($2::text IS NULL OR LOWER(qr.subject) = LOWER($2))
     AND ($3::text IS NULL OR qr.grade_level = $3)
     AND ($4::text IS NULL OR LOWER(gq.question_type) = LOWER($4))
@@ -419,7 +419,7 @@ export const FETCH_EVALUATIONS = `
     ON gq.recipe_id = qr.recipe_id
   WHERE gq.experiment_tracker = $1
     AND LOWER(qr.subject) = LOWER($2)
-    AND aer.evaluator_version = '1.5.4'
+    AND aer.evaluator_version = '2.0.0'
     AND ($3::text IS NULL OR LOWER(COALESCE(
       gq.model_parsed_response->>'difficulty',
       gq.inference_params->'item_inference_params'->>'target_difficulty',
@@ -458,7 +458,7 @@ export const LATENCY_BY_PERFORMANCE = `
     JOIN public.question_recipes AS qr
       ON gq.recipe_id = qr.recipe_id
     WHERE gq.experiment_tracker = $1
-      AND aer.evaluator_version = '1.5.4'
+      AND aer.evaluator_version = '2.0.0'
       AND ($2::text IS NULL OR LOWER(qr.subject) = LOWER($2))
       AND ($3::text IS NULL OR qr.grade_level = $3)
       AND ($4::text IS NULL OR LOWER(gq.question_type) = LOWER($4))
@@ -490,7 +490,7 @@ export const LATENCY_BY_PERFORMANCE = `
       ON gq.recipe_id = qr.recipe_id
     CROSS JOIN score_percentiles sp
     WHERE gq.experiment_tracker = $1
-      AND aer.evaluator_version = '1.5.4'
+      AND aer.evaluator_version = '2.0.0'
       AND ($2::text IS NULL OR LOWER(qr.subject) = LOWER($2))
       AND ($3::text IS NULL OR qr.grade_level = $3)
       AND ($4::text IS NULL OR LOWER(gq.question_type) = LOWER($4))
