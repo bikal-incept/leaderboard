@@ -203,5 +203,8 @@ export default defineConfig({
   server: {
     port: 5173,
     host: true,
+    allowedHosts: [
+      'ec2-100-22-145-138.us-west-2.compute.amazonaws.com',
+    ],
   },
 });
