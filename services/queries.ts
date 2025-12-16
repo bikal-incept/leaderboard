@@ -554,6 +554,49 @@ export const LATENCY_BY_PERFORMANCE = `
     END;
 `;
 
+/**
+ * Question Recipes Query
+ * 
+ * Fetches question recipes filtered by grade level and subject.
+ * Only returns recipes with a valid standard_id_l1 (not null and not empty).
+ * 
+ * Parameters:
+ *  $1: grade_level (required) - e.g., '3', '4'
+ *  $2: subject (required) - e.g., 'ela', 'math'
+ */
+export const QUESTION_RECIPES_BY_FILTERS = `
+  SELECT
+    recipe_id,
+    source_sheet,
+    grade_level,
+    subject,
+    domain,
+    cluster,
+    standard_id_l1,
+    standard_desc_l1,
+    standard_id_l2,
+    standard_desc_l2,
+    substandard_id,
+    lesson_title,
+    question_type,
+    tasks,
+    difficulty,
+    constraints,
+    direct_instruction,
+    step_by_step_explanation,
+    misconception_1,
+    misconception_2,
+    misconception_3,
+    misconception_4,
+    created_at
+  FROM public.question_recipes
+  WHERE grade_level = $1
+    AND LOWER(subject) = LOWER($2)
+    AND standard_id_l1 IS NOT NULL
+    AND standard_id_l1 != ''
+  ORDER BY recipe_id;
+`;
+
 // Optional map so you can look queries up dynamically if you like.
 export const SQL_QUERIES = {
   LEADERBOARD_BY_SUBJECT,
@@ -565,6 +608,7 @@ export const SQL_QUERIES = {
   EXPERIMENT_SCORES,
   FETCH_EVALUATIONS,
   LATENCY_BY_PERFORMANCE,
+  QUESTION_RECIPES_BY_FILTERS,
 };
 
 export type SqlQueryKey = keyof typeof SQL_QUERIES;

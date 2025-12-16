@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Outlet, NavLink } from 'react-router-dom';
-import { BarChart3, FileText, Sun, Moon, Database, GitCompare } from 'lucide-react';
+import { BarChart3, FileText, Sun, Moon, Database, GitCompare, BookOpen } from 'lucide-react';
 
 const Layout: React.FC = () => {
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
@@ -20,6 +20,7 @@ const Layout: React.FC = () => {
     { path: '/evaluations', icon: FileText, label: 'Evaluations' },
     { path: '/compare', icon: GitCompare, label: 'Compare' },
     { path: '/look-at-data', icon: Database, label: 'Data' },
+    { path: '/recipe-center', icon: BookOpen, label: 'Recipe Center' },
   ];
 
   const toggleTheme = () => {

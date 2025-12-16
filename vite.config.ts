@@ -1,7 +1,113 @@
 import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
-import { LEADERBOARD_MV_1_5_4, LEADERBOARD_MV_2_0_0, EXPERIMENT_REPORT, EXPERIMENT_SUMMARY, EXPERIMENT_SCORES, FETCH_EVALUATIONS } from './services/queries';
+import { readFileSync } from 'fs';
+import { join } from 'path';
+import { LEADERBOARD_MV_1_5_4, LEADERBOARD_MV_2_0_0, EXPERIMENT_REPORT, EXPERIMENT_SUMMARY, EXPERIMENT_SCORES, FETCH_EVALUATIONS, QUESTION_RECIPES_BY_FILTERS } from './services/queries';
 import { query } from './services/db';
+import { BLOCKED_STANDARDS_SET, BLOCKED_COMMON_CORE_STANDARDS_SET } from './src/config/blockedStandards';
+
+// Load and parse CSV to get Common Core standards for blocked curriculum codes
+function loadBlockedCommonCoreStandards() {
+  try {
+    const csvPath = './src/data/Reading_Curriculum.csv';
+    const csvContent = readFileSync(csvPath, 'utf-8');
+    const lines = csvContent.split('\n');
+    
+    if (lines.length < 2) {
+      console.error('[Vite Config] CSV file is empty or invalid');
+      return;
+    }
+    
+    // Parse CSV headers - be more lenient with parsing
+    const headerLine = lines[0];
+    const headers: string[] = [];
+    let currentHeader = '';
+    let inQuotes = false;
+    
+    for (let i = 0; i < headerLine.length; i++) {
+      const char = headerLine[i];
+      if (char === '"') {
+        inQuotes = !inQuotes;
+      } else if (char === ',' && !inQuotes) {
+        headers.push(currentHeader.trim().replace(/^"|"$/g, ''));
+        currentHeader = '';
+      } else {
+        currentHeader += char;
+      }
+    }
+    headers.push(currentHeader.trim().replace(/^"|"$/g, ''));
+    
+    const nameIndex = headers.findIndex(h => h.toLowerCase() === 'name');
+    const standardCodeIndex = headers.findIndex(h => h.toLowerCase().includes('standard_code'));
+    
+    console.log('[Vite Config] Loading blocked Common Core standards from CSV...');
+    console.log('[Vite Config] Headers found:', headers.slice(0, 5));
+    console.log('[Vite Config] Name column index:', nameIndex, 'Standard code index:', standardCodeIndex);
+    
+    if (nameIndex === -1 || standardCodeIndex === -1) {
+      console.error('[Vite Config] Could not find required columns');
+      return;
+    }
+    
+    let processedCount = 0;
+    let blockedCount = 0;
+    
+    // Parse data rows
+    for (let i = 1; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (!line) continue;
+      
+      // CSV parsing handling quoted fields
+      const fields: string[] = [];
+      let currentField = '';
+      let inQuotes = false;
+      
+      for (let j = 0; j < line.length; j++) {
+        const char = line[j];
+        if (char === '"' && (j === 0 || line[j-1] !== '\\')) {
+          inQuotes = !inQuotes;
+        } else if (char === ',' && !inQuotes) {
+          fields.push(currentField.trim().replace(/^"|"$/g, ''));
+          currentField = '';
+        } else {
+          currentField += char;
+        }
+      }
+      fields.push(currentField.trim().replace(/^"|"$/g, ''));
+      
+      if (fields.length < Math.max(nameIndex, standardCodeIndex) + 1) {
+        continue;
+      }
+      
+      const curriculumCode = fields[nameIndex]?.trim();
+      const commonCoreStandards = fields[standardCodeIndex]?.trim();
+      
+      processedCount++;
+      
+      // If this curriculum code is in our blocked list, add its Common Core standards
+      if (curriculumCode && BLOCKED_STANDARDS_SET.has(curriculumCode) && commonCoreStandards) {
+        const standards = commonCoreStandards.split(',').map(s => s.trim()).filter(s => s && s.length > 0);
+        if (standards.length > 0) {
+          blockedCount++;
+          standards.forEach(std => {
+            BLOCKED_COMMON_CORE_STANDARDS_SET.add(std);
+          });
+        }
+      }
+    }
+    
+    console.log('[Vite Config] Processed', processedCount, 'CSV rows');
+    console.log('[Vite Config] Found', blockedCount, 'blocked curriculum codes with Common Core standards');
+    console.log('[Vite Config] Loaded', BLOCKED_COMMON_CORE_STANDARDS_SET.size, 'unique Common Core standards to block');
+    console.log('[Vite Config] Sample blocked Common Core standards:', Array.from(BLOCKED_COMMON_CORE_STANDARDS_SET).slice(0, 10));
+  } catch (err: any) {
+    console.error('[Vite Config] Error loading blocked Common Core standards:', err.message);
+    console.error('[Vite Config] Stack:', err.stack);
+  }
+}
+
+// Execute the loading
+loadBlockedCommonCoreStandards();
 
 /**
  * Lightweight dev-time API for `/api/leaderboard`, `/api/experiment-report`, and `/api/experiment-summary`.
@@ -204,6 +310,60 @@ const apiPlugin = (): Plugin => ({
           res.statusCode = 200;
           res.setHeader('Content-Type', 'application/json');
           res.end(JSON.stringify(rows));
+          return;
+        }
+
+        // Handle /api/recipes
+        if (req.url.startsWith('/api/recipes')) {
+          const gradeLevel = url.searchParams.get('grade_level') || '3';
+          const subject = url.searchParams.get('subject') || 'ela';
+          const includeMultimedia = url.searchParams.get('include_multimedia') === 'true';
+
+          console.log('[API] /api/recipes request:', {
+            gradeLevel,
+            subject,
+            includeMultimedia,
+            blockedCommonCoreStandardsCount: BLOCKED_COMMON_CORE_STANDARDS_SET.size
+          });
+
+          // Execute QUESTION_RECIPES_BY_FILTERS query
+          // Parameters: grade_level, subject
+          const { rows } = await query(QUESTION_RECIPES_BY_FILTERS, [
+            gradeLevel,
+            subject
+          ]);
+
+          // Filter out multimedia standards unless explicitly requested
+          let filteredRows = rows;
+          if (!includeMultimedia) {
+            filteredRows = rows.filter(row => {
+              const standardId = row.standard_id_l1;
+              if (!standardId) return true; // Keep if no standard
+              
+              // Check if it's a curriculum code
+              if (BLOCKED_STANDARDS_SET.has(standardId)) {
+                return false;
+              }
+              
+              // Check Common Core standards (comma-separated)
+              const standards = standardId.split(',').map((s: string) => s.trim());
+              const isBlocked = standards.some((std: string) => BLOCKED_COMMON_CORE_STANDARDS_SET.has(std));
+              
+              return !isBlocked;
+            });
+          }
+
+          console.log(`[API] Query returned ${rows?.length || 0} rows, filtered to ${filteredRows.length} (excluded ${(rows?.length || 0) - filteredRows.length} multimedia standards)`);
+          
+          if ((rows?.length || 0) - filteredRows.length > 0) {
+            // Log some examples of what was filtered
+            const blocked = rows.filter(r => !filteredRows.includes(r)).slice(0, 3);
+            console.log('[API] Sample blocked recipes:', blocked.map(r => ({ id: r.recipe_id, standard: r.standard_id_l1 })));
+          }
+
+          res.statusCode = 200;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify(filteredRows));
           return;
         }
 
