@@ -19,6 +19,7 @@ import {
   Globe,
 } from 'lucide-react';
 import { mockEvaluations } from '../data/mockEvaluations';
+import { isExperimentBlocked } from '../config/blockedExperiments';
 
 // Lightweight per-question score row for experiment score distributions
 type ExperimentScoreRow = {
@@ -248,6 +249,9 @@ const Evaluations: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   
+  // Real experiment list from API
+  const [availableExperiments, setAvailableExperiments] = useState<Array<{ experiment_tracker: string; model: string }>>([]);
+  
   // Cache state
   const [cachedReports, setCachedReports] = useState<CachedExperimentReport[]>([]);
   const [showCacheDropdown, setShowCacheDropdown] = useState(false);
@@ -270,6 +274,56 @@ const Evaluations: React.FC = () => {
         console.error('[Cache] Failed to save cleaned cache', err);
       }
     }
+  }, []);
+
+  // Load available experiments from leaderboard API on mount
+  useEffect(() => {
+    const fetchExperiments = async () => {
+      try {
+        // Fetch from both ELA and Math to get all experiments
+        const [elaResponse, mathResponse] = await Promise.all([
+          fetch(`/api/leaderboard?subject=ela&evaluator_version=2.0.0`),
+          fetch(`/api/leaderboard?subject=math&evaluator_version=2.0.0`),
+        ]);
+
+        if (!elaResponse.ok || !mathResponse.ok) {
+          console.warn('[Evaluations] Failed to fetch experiment list, using mock data');
+          return;
+        }
+
+        const [elaData, mathData] = await Promise.all([
+          elaResponse.json(),
+          mathResponse.json(),
+        ]);
+
+        // Combine and get unique experiment_trackers
+        const allData = [...(elaData || []), ...(mathData || [])];
+        const uniqueExperiments = Array.from(
+          new Map(
+            allData
+              .filter((row: any) => row.experiment_tracker)
+              .map((row: any) => [
+                row.experiment_tracker,
+                {
+                  experiment_tracker: row.experiment_tracker,
+                  model: row.model || row.experiment_tracker,
+                },
+              ])
+          ).values()
+        );
+
+        console.log('[Evaluations] Loaded experiments from API:', uniqueExperiments.length);
+        console.log('[Evaluations] All experiment_tracker values:', 
+          uniqueExperiments.map(e => e.experiment_tracker).sort()
+        );
+        setAvailableExperiments(uniqueExperiments);
+      } catch (err) {
+        console.error('[Evaluations] Error fetching experiments:', err);
+        // Will fall back to mock data if this fails
+      }
+    };
+
+    fetchExperiments();
   }, []);
 
   // Close dropdown when clicking outside
@@ -695,7 +749,8 @@ const Evaluations: React.FC = () => {
         }
         
         if (filters.recommendation !== 'all') {
-          if (evalData.ti_question_qa.recommendation !== filters.recommendation) return;
+          // Only apply recommendation filter for version 1.x data
+          if (evalData.ti_question_qa && evalData.ti_question_qa.recommendation !== filters.recommendation) return;
         }
         
         samples.push({ experimentId: exp.request_id, evalKey, evalData });
@@ -993,15 +1048,34 @@ const Evaluations: React.FC = () => {
             }}
           >
             <option value="">Select an experiment...</option>
-            {allExperiments
+            {(availableExperiments.length > 0 ? availableExperiments : allExperiments.map(exp => ({
+              experiment_tracker: exp.request_id,
+              model: experimentNames[exp.request_id] || exp.request_id
+            })))
               .filter((exp) => {
-                const name = experimentNames[exp.request_id] || '';
-                // Filter out experiments named "Incept"
-                return !name.toLowerCase().includes('incept');
+                const tracker = exp.experiment_tracker;
+                const name = exp.model || '';
+                
+                // DETAILED DEBUG LOGGING
+                console.log('[Filter Check]', {
+                  experiment_tracker: tracker,
+                  model: name,
+                  checking_against: {
+                    BLOCKED_IDS: ['ela-Kimi-K2-thinking-baseline'],
+                    BLOCKED_PATTERNS: ['ela-Kimi-K2-thinking-baseline'],
+                  }
+                });
+                
+                // Filter out blocked experiments using centralized config
+                const isBlocked = isExperimentBlocked(tracker, name);
+                
+                console.log(`  -> Result: ${isBlocked ? 'BLOCKED ❌' : 'ALLOWED ✅'}`);
+                
+                return !isBlocked;
               })
               .map((exp, index) => (
-                <option key={exp.request_id} value={exp.request_id}>
-                  {experimentNames[exp.request_id] || `Experiment #${index + 1}`} - {exp.request_id.substring(0, 8)}...
+                <option key={exp.experiment_tracker} value={exp.experiment_tracker}>
+                  {exp.model || exp.experiment_tracker} {exp.experiment_tracker.length > 30 ? `- ${exp.experiment_tracker.substring(0, 8)}...` : ''}
                 </option>
               ))}
           </select>
@@ -2611,9 +2685,15 @@ const DifficultyFeedbackContent: React.FC<{
       const evalData = Object.values(evalResponse.evaluations)[0] as any;
       if (!evalData) return;
 
-      // Suggested Improvements
-      if (evalData.ti_question_qa?.suggested_improvements) {
-        evalData.ti_question_qa.suggested_improvements.forEach((improvement: string) => {
+      // Check if this is version 2.0.0 with inceptbench_new_evaluation
+      const isVersion2 = evalData.inceptbench_new_evaluation !== undefined;
+
+      if (isVersion2) {
+        const newEval = evalData.inceptbench_new_evaluation;
+        
+        // Overall suggested improvements
+        if (newEval.overall?.suggested_improvements) {
+          const improvement = newEval.overall.suggested_improvements;
           const existing = suggestedImprovements.find(i => i.text === improvement);
           if (existing) {
             existing.count++;
@@ -2621,67 +2701,118 @@ const DifficultyFeedbackContent: React.FC<{
           } else {
             suggestedImprovements.push({ text: improvement, count: 1, questionIds: [item.question_id] });
           }
-        });
-      }
+        }
 
-      // Reading Question Failures (only failures, score === 0)
-      if (evalData.reading_question_qc?.question_checks) {
-        Object.entries(evalData.reading_question_qc.question_checks).forEach(([key, check]: [string, any]) => {
-          if (check.score === 0) {
-            const checkName = key.replace(/_/g, ' ');
-            const existing = readingFailures.find(f => f.check === checkName);
-            if (existing) {
-              existing.count++;
-              existing.questionIds.push(item.question_id);
-            } else {
-              readingFailures.push({ check: checkName, reason: check.response, count: 1, questionIds: [item.question_id] });
+        // Dimension-level suggested improvements and low scores
+        Object.keys(newEval).forEach(key => {
+          if (key === 'overall' || key === 'content_type' || key === 'weighted_score' || key === 'subcontent_evaluations') return;
+          
+          const dimension = newEval[key];
+          if (typeof dimension === 'object' && dimension !== null && 'score' in dimension) {
+            // Collect suggested improvements from dimensions
+            if (dimension.suggested_improvements) {
+              const improvement = dimension.suggested_improvements;
+              const existing = suggestedImprovements.find(i => i.text === improvement);
+              if (existing) {
+                existing.count++;
+                existing.questionIds.push(item.question_id);
+              } else {
+                suggestedImprovements.push({ text: improvement, count: 1, questionIds: [item.question_id] });
+              }
+            }
+
+            // Track low-scoring dimensions (< 0.9) as "failures"
+            if (dimension.score < 0.9 && dimension.reasoning) {
+              const checkName = key.replace(/_/g, ' ');
+              const existing = readingFailures.find(f => f.check === checkName);
+              if (existing) {
+                existing.count++;
+                existing.questionIds.push(item.question_id);
+              } else {
+                readingFailures.push({ 
+                  check: checkName, 
+                  reason: dimension.reasoning, 
+                  count: 1, 
+                  questionIds: [item.question_id] 
+                });
+              }
             }
           }
         });
-      }
-
-      if (evalData.reading_question_qc?.distractor_checks) {
-        Object.entries(evalData.reading_question_qc.distractor_checks).forEach(([key, check]: [string, any]) => {
-          if (check.score === 0) {
-            const checkName = `Distractor: ${key.replace(/_/g, ' ')}`;
-            const existing = readingFailures.find(f => f.check === checkName);
+      } else {
+        // Version 1.x handling (original code)
+        // Suggested Improvements
+        if (evalData.ti_question_qa?.suggested_improvements) {
+          evalData.ti_question_qa.suggested_improvements.forEach((improvement: string) => {
+            const existing = suggestedImprovements.find(i => i.text === improvement);
             if (existing) {
               existing.count++;
               existing.questionIds.push(item.question_id);
             } else {
-              readingFailures.push({ check: checkName, reason: check.response, count: 1, questionIds: [item.question_id] });
-            }
-          }
-        });
-      }
-
-      // Math Content Failures (only FAIL values)
-      if (evalData.math_content_evaluator) {
-        Object.entries(evalData.math_content_evaluator)
-          .filter(([key, value]) => !['overall_score', 'overall_rating', 'pass_count', 'fail_count'].includes(key) && value === 'FAIL')
-          .forEach(([key]) => {
-            const checkName = key.replace(/_/g, ' ');
-            const existing = mathFailures.find(f => f.check === checkName);
-            if (existing) {
-              existing.count++;
-              existing.questionIds.push(item.question_id);
-            } else {
-              mathFailures.push({ check: checkName, count: 1, questionIds: [item.question_id] });
+              suggestedImprovements.push({ text: improvement, count: 1, questionIds: [item.question_id] });
             }
           });
-      }
+        }
 
-      // Localization Issues (only issues from failed evaluations)
-      if (evalData.localization_evaluator?.issues) {
-        evalData.localization_evaluator.issues.forEach((issue: string) => {
-          const existing = localizationIssues.find(i => i.text === issue);
-          if (existing) {
-            existing.count++;
-            existing.questionIds.push(item.question_id);
-          } else {
-            localizationIssues.push({ text: issue, count: 1, questionIds: [item.question_id] });
-          }
-        });
+        // Reading Question Failures (only failures, score === 0)
+        if (evalData.reading_question_qc?.question_checks) {
+          Object.entries(evalData.reading_question_qc.question_checks).forEach(([key, check]: [string, any]) => {
+            if (check.score === 0) {
+              const checkName = key.replace(/_/g, ' ');
+              const existing = readingFailures.find(f => f.check === checkName);
+              if (existing) {
+                existing.count++;
+                existing.questionIds.push(item.question_id);
+              } else {
+                readingFailures.push({ check: checkName, reason: check.response, count: 1, questionIds: [item.question_id] });
+              }
+            }
+          });
+        }
+
+        if (evalData.reading_question_qc?.distractor_checks) {
+          Object.entries(evalData.reading_question_qc.distractor_checks).forEach(([key, check]: [string, any]) => {
+            if (check.score === 0) {
+              const checkName = `Distractor: ${key.replace(/_/g, ' ')}`;
+              const existing = readingFailures.find(f => f.check === checkName);
+              if (existing) {
+                existing.count++;
+                existing.questionIds.push(item.question_id);
+              } else {
+                readingFailures.push({ check: checkName, reason: check.response, count: 1, questionIds: [item.question_id] });
+              }
+            }
+          });
+        }
+
+        // Math Content Failures (only FAIL values)
+        if (evalData.math_content_evaluator) {
+          Object.entries(evalData.math_content_evaluator)
+            .filter(([key, value]) => !['overall_score', 'overall_rating', 'pass_count', 'fail_count'].includes(key) && value === 'FAIL')
+            .forEach(([key]) => {
+              const checkName = key.replace(/_/g, ' ');
+              const existing = mathFailures.find(f => f.check === checkName);
+              if (existing) {
+                existing.count++;
+                existing.questionIds.push(item.question_id);
+              } else {
+                mathFailures.push({ check: checkName, count: 1, questionIds: [item.question_id] });
+              }
+            });
+        }
+
+        // Localization Issues (only issues from failed evaluations)
+        if (evalData.localization_evaluator?.issues) {
+          evalData.localization_evaluator.issues.forEach((issue: string) => {
+            const existing = localizationIssues.find(i => i.text === issue);
+            if (existing) {
+              existing.count++;
+              existing.questionIds.push(item.question_id);
+            } else {
+              localizationIssues.push({ text: issue, count: 1, questionIds: [item.question_id] });
+            }
+          });
+        }
       }
     });
 
@@ -2943,22 +3074,15 @@ const AggregatedFeedbackContent: React.FC<{
       const evalData = Object.values(evalResponse.evaluations)[0] as any;
       if (!evalData) return;
 
-      // QA Issues
-      if (evalData.ti_question_qa?.issues) {
-        evalData.ti_question_qa.issues.forEach((issue: string) => {
-          const existing = qaIssues.find(i => i.text === issue);
-          if (existing) {
-            existing.count++;
-            existing.questionIds.push(item.question_id);
-          } else {
-            qaIssues.push({ text: issue, count: 1, questionIds: [item.question_id] });
-          }
-        });
-      }
+      // Check if this is version 2.0.0 with inceptbench_new_evaluation
+      const isVersion2 = evalData.inceptbench_new_evaluation !== undefined;
 
-      // Suggested Improvements
-      if (evalData.ti_question_qa?.suggested_improvements) {
-        evalData.ti_question_qa.suggested_improvements.forEach((improvement: string) => {
+      if (isVersion2) {
+        const newEval = evalData.inceptbench_new_evaluation;
+        
+        // Overall suggested improvements
+        if (newEval.overall?.suggested_improvements) {
+          const improvement = newEval.overall.suggested_improvements;
           const existing = suggestedImprovements.find(i => i.text === improvement);
           if (existing) {
             existing.count++;
@@ -2966,67 +3090,131 @@ const AggregatedFeedbackContent: React.FC<{
           } else {
             suggestedImprovements.push({ text: improvement, count: 1, questionIds: [item.question_id] });
           }
-        });
-      }
+        }
 
-      // Reading Question Failures
-      if (evalData.reading_question_qc?.question_checks) {
-        Object.entries(evalData.reading_question_qc.question_checks).forEach(([key, check]: [string, any]) => {
-          if (check.score === 0) {
-            const checkName = key.replace(/_/g, ' ');
-            const existing = readingFailures.find(f => f.check === checkName);
-            if (existing) {
-              existing.count++;
-              existing.questionIds.push(item.question_id);
-            } else {
-              readingFailures.push({ check: checkName, reason: check.response, count: 1, questionIds: [item.question_id] });
+        // Dimension-level suggested improvements and low scores
+        Object.keys(newEval).forEach(key => {
+          if (key === 'overall' || key === 'content_type' || key === 'weighted_score' || key === 'subcontent_evaluations') return;
+          
+          const dimension = newEval[key];
+          if (typeof dimension === 'object' && dimension !== null && 'score' in dimension) {
+            // Collect suggested improvements from dimensions
+            if (dimension.suggested_improvements) {
+              const improvement = dimension.suggested_improvements;
+              const existing = suggestedImprovements.find(i => i.text === improvement);
+              if (existing) {
+                existing.count++;
+                existing.questionIds.push(item.question_id);
+              } else {
+                suggestedImprovements.push({ text: improvement, count: 1, questionIds: [item.question_id] });
+              }
+            }
+
+            // Track low-scoring dimensions (< 0.9) as "failures"
+            if (dimension.score < 0.9 && dimension.reasoning) {
+              const checkName = key.replace(/_/g, ' ');
+              const existing = readingFailures.find(f => f.check === checkName);
+              if (existing) {
+                existing.count++;
+                existing.questionIds.push(item.question_id);
+              } else {
+                readingFailures.push({ 
+                  check: checkName, 
+                  reason: dimension.reasoning, 
+                  count: 1, 
+                  questionIds: [item.question_id] 
+                });
+              }
             }
           }
         });
-      }
-
-      if (evalData.reading_question_qc?.distractor_checks) {
-        Object.entries(evalData.reading_question_qc.distractor_checks).forEach(([key, check]: [string, any]) => {
-          if (check.score === 0) {
-            const checkName = `Distractor: ${key.replace(/_/g, ' ')}`;
-            const existing = readingFailures.find(f => f.check === checkName);
+      } else {
+        // Version 1.x handling (original code)
+        // QA Issues
+        if (evalData.ti_question_qa?.issues) {
+          evalData.ti_question_qa.issues.forEach((issue: string) => {
+            const existing = qaIssues.find(i => i.text === issue);
             if (existing) {
               existing.count++;
               existing.questionIds.push(item.question_id);
             } else {
-              readingFailures.push({ check: checkName, reason: check.response, count: 1, questionIds: [item.question_id] });
-            }
-          }
-        });
-      }
-
-      // Math Content Failures
-      if (evalData.math_content_evaluator) {
-        Object.entries(evalData.math_content_evaluator)
-          .filter(([key, value]) => !['overall_score', 'overall_rating', 'pass_count', 'fail_count'].includes(key) && value === 'FAIL')
-          .forEach(([key]) => {
-            const checkName = key.replace(/_/g, ' ');
-            const existing = mathFailures.find(f => f.check === checkName);
-            if (existing) {
-              existing.count++;
-              existing.questionIds.push(item.question_id);
-            } else {
-              mathFailures.push({ check: checkName, count: 1, questionIds: [item.question_id] });
+              qaIssues.push({ text: issue, count: 1, questionIds: [item.question_id] });
             }
           });
-      }
+        }
 
-      // Localization Issues
-      if (evalData.localization_evaluator?.issues) {
-        evalData.localization_evaluator.issues.forEach((issue: string) => {
-          const existing = localizationIssues.find(i => i.text === issue);
-          if (existing) {
-            existing.count++;
-            existing.questionIds.push(item.question_id);
-          } else {
-            localizationIssues.push({ text: issue, count: 1, questionIds: [item.question_id] });
-          }
-        });
+        // Suggested Improvements
+        if (evalData.ti_question_qa?.suggested_improvements) {
+          evalData.ti_question_qa.suggested_improvements.forEach((improvement: string) => {
+            const existing = suggestedImprovements.find(i => i.text === improvement);
+            if (existing) {
+              existing.count++;
+              existing.questionIds.push(item.question_id);
+            } else {
+              suggestedImprovements.push({ text: improvement, count: 1, questionIds: [item.question_id] });
+            }
+          });
+        }
+
+        // Reading Question Failures
+        if (evalData.reading_question_qc?.question_checks) {
+          Object.entries(evalData.reading_question_qc.question_checks).forEach(([key, check]: [string, any]) => {
+            if (check.score === 0) {
+              const checkName = key.replace(/_/g, ' ');
+              const existing = readingFailures.find(f => f.check === checkName);
+              if (existing) {
+                existing.count++;
+                existing.questionIds.push(item.question_id);
+              } else {
+                readingFailures.push({ check: checkName, reason: check.response, count: 1, questionIds: [item.question_id] });
+              }
+            }
+          });
+        }
+
+        if (evalData.reading_question_qc?.distractor_checks) {
+          Object.entries(evalData.reading_question_qc.distractor_checks).forEach(([key, check]: [string, any]) => {
+            if (check.score === 0) {
+              const checkName = `Distractor: ${key.replace(/_/g, ' ')}`;
+              const existing = readingFailures.find(f => f.check === checkName);
+              if (existing) {
+                existing.count++;
+                existing.questionIds.push(item.question_id);
+              } else {
+                readingFailures.push({ check: checkName, reason: check.response, count: 1, questionIds: [item.question_id] });
+              }
+            }
+          });
+        }
+
+        // Math Content Failures
+        if (evalData.math_content_evaluator) {
+          Object.entries(evalData.math_content_evaluator)
+            .filter(([key, value]) => !['overall_score', 'overall_rating', 'pass_count', 'fail_count'].includes(key) && value === 'FAIL')
+            .forEach(([key]) => {
+              const checkName = key.replace(/_/g, ' ');
+              const existing = mathFailures.find(f => f.check === checkName);
+              if (existing) {
+                existing.count++;
+                existing.questionIds.push(item.question_id);
+              } else {
+                mathFailures.push({ check: checkName, count: 1, questionIds: [item.question_id] });
+              }
+            });
+        }
+
+        // Localization Issues
+        if (evalData.localization_evaluator?.issues) {
+          evalData.localization_evaluator.issues.forEach((issue: string) => {
+            const existing = localizationIssues.find(i => i.text === issue);
+            if (existing) {
+              existing.count++;
+              existing.questionIds.push(item.question_id);
+            } else {
+              localizationIssues.push({ text: issue, count: 1, questionIds: [item.question_id] });
+            }
+          });
+        }
       }
     });
 

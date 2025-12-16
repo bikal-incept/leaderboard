@@ -7,7 +7,9 @@ type EvaluationData = {
   question_id: number;
   recipe_id: number;
   model_parsed_response: any;
+  model_raw_response: string;
   prompt_text: string;
+  inference_params: any;
   evaluator_parsed_response: any;
   evaluator_score: number;
   difficulty: string;
@@ -127,7 +129,7 @@ const deleteFromEvalCache = (cacheKey: string) => {
 // Component to render evaluation table
 const EvaluationTable: React.FC<{ 
   data: EvaluationData[]; 
-  setModalContent: (content: { type: 'response' | 'prompt' | 'feedback'; data: any } | null) => void;
+  setModalContent: (content: { type: 'raw_response' | 'response' | 'prompt' | 'feedback' | 'inference_params'; data: any } | null) => void;
 }> = ({ data, setModalContent }) => {
   return (
     <div 
@@ -185,10 +187,30 @@ const EvaluationTable: React.FC<{
             const isCorrect = answerVerification?.is_correct;
             
             // Extract failed quality scores (< 0.85)
-            const qualityScores = evalData.ti_question_qa?.scores || {};
-            const failedMetrics = Object.entries(qualityScores)
-              .filter(([_, score]) => (score as number) < 0.85)
-              .map(([key, _]) => key.replace(/_/g, ' '));
+            let failedMetrics: string[] = [];
+            
+            // Check if this is version 2.0.0
+            const isVersion2 = evalData.inceptbench_new_evaluation !== undefined;
+            
+            if (isVersion2) {
+              const newEval = evalData.inceptbench_new_evaluation;
+              // Extract low-scoring dimensions (< 0.85) from version 2.0.0
+              Object.keys(newEval).forEach(key => {
+                if (key === 'overall' || key === 'content_type' || key === 'weighted_score' || key === 'subcontent_evaluations') return;
+                const dimension = newEval[key];
+                if (typeof dimension === 'object' && dimension !== null && 'score' in dimension) {
+                  if (dimension.score < 0.85) {
+                    failedMetrics.push(key.replace(/_/g, ' '));
+                  }
+                }
+              });
+            } else {
+              // Version 1.x handling
+              const qualityScores = evalData.ti_question_qa?.scores || {};
+              failedMetrics = Object.entries(qualityScores)
+                .filter(([_, score]) => (score as number) < 0.85)
+                .map(([key, _]) => key.replace(/_/g, ' '));
+            }
             
             // Extract failed image quality scores (< 0.85)
             const imageQualityScores = evalData.image_quality?.scores || {};
@@ -280,13 +302,44 @@ const EvaluationTable: React.FC<{
                   )}
                 </td>
                 {/* Actions */}
-                <td style={{ padding: '12px', textAlign: 'center' }}>
-                  <div style={{ display: 'flex', gap: '6px', justifyContent: 'center' }}>
+                <td style={{ padding: '8px', textAlign: 'center' }}>
+                  <div style={{ display: 'flex', gap: '4px', justifyContent: 'center', flexWrap: 'wrap' }}>
+                    <button
+                      onClick={() => setModalContent({ type: 'raw_response', data: item.model_raw_response })}
+                      className="action-btn"
+                      style={{
+                        padding: '4px 6px',
+                        fontSize: '10px',
+                        background: 'var(--surface)',
+                        border: '1px solid var(--border)',
+                        borderRadius: '4px',
+                        color: 'var(--text-secondary)',
+                        cursor: 'pointer',
+                        transition: 'all 0.2s ease',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '3px',
+                        whiteSpace: 'nowrap',
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.background = 'var(--hover-bg)';
+                        e.currentTarget.style.color = 'var(--text)';
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.background = 'var(--surface)';
+                        e.currentTarget.style.color = 'var(--text-secondary)';
+                      }}
+                      title="View raw model response (unprocessed)"
+                    >
+                      <Code size={12} style={{ flexShrink: 0 }} />
+                      <span className="btn-text">Raw</span>
+                    </button>
                     <button
                       onClick={() => setModalContent({ type: 'response', data: item.model_parsed_response })}
+                      className="action-btn"
                       style={{
-                        padding: '6px 10px',
-                        fontSize: '11px',
+                        padding: '4px 6px',
+                        fontSize: '10px',
                         background: 'var(--primary)',
                         border: 'none',
                         borderRadius: '4px',
@@ -295,7 +348,8 @@ const EvaluationTable: React.FC<{
                         transition: 'all 0.2s ease',
                         display: 'flex',
                         alignItems: 'center',
-                        gap: '4px',
+                        gap: '3px',
+                        whiteSpace: 'nowrap',
                       }}
                       onMouseEnter={(e) => {
                         e.currentTarget.style.opacity = '0.8';
@@ -303,15 +357,17 @@ const EvaluationTable: React.FC<{
                       onMouseLeave={(e) => {
                         e.currentTarget.style.opacity = '1';
                       }}
+                      title="View parsed model response (JSON)"
                     >
-                      <Code size={12} />
-                      Response
+                      <Code size={12} style={{ flexShrink: 0 }} />
+                      <span className="btn-text">Response</span>
                     </button>
                     <button
                       onClick={() => setModalContent({ type: 'prompt', data: item.prompt_text })}
+                      className="action-btn"
                       style={{
-                        padding: '6px 10px',
-                        fontSize: '11px',
+                        padding: '4px 6px',
+                        fontSize: '10px',
                         background: 'var(--surface)',
                         border: '1px solid var(--border)',
                         borderRadius: '4px',
@@ -320,7 +376,8 @@ const EvaluationTable: React.FC<{
                         transition: 'all 0.2s ease',
                         display: 'flex',
                         alignItems: 'center',
-                        gap: '4px',
+                        gap: '3px',
+                        whiteSpace: 'nowrap',
                       }}
                       onMouseEnter={(e) => {
                         e.currentTarget.style.background = 'var(--hover-bg)';
@@ -329,14 +386,15 @@ const EvaluationTable: React.FC<{
                         e.currentTarget.style.background = 'var(--surface)';
                       }}
                     >
-                      <Eye size={12} />
-                      Prompt
+                      <Eye size={12} style={{ flexShrink: 0 }} />
+                      <span className="btn-text">Prompt</span>
                     </button>
                     <button
                       onClick={() => setModalContent({ type: 'feedback', data: item.evaluator_parsed_response })}
+                      className="action-btn"
                       style={{
-                        padding: '6px 10px',
-                        fontSize: '11px',
+                        padding: '4px 6px',
+                        fontSize: '10px',
                         background: 'var(--surface)',
                         border: '1px solid var(--border)',
                         borderRadius: '4px',
@@ -345,7 +403,8 @@ const EvaluationTable: React.FC<{
                         transition: 'all 0.2s ease',
                         display: 'flex',
                         alignItems: 'center',
-                        gap: '4px',
+                        gap: '3px',
+                        whiteSpace: 'nowrap',
                       }}
                       onMouseEnter={(e) => {
                         e.currentTarget.style.background = 'var(--hover-bg)';
@@ -354,8 +413,36 @@ const EvaluationTable: React.FC<{
                         e.currentTarget.style.background = 'var(--surface)';
                       }}
                     >
-                      <MessageSquare size={12} />
-                      Feedback
+                      <MessageSquare size={12} style={{ flexShrink: 0 }} />
+                      <span className="btn-text">Feedback</span>
+                    </button>
+                    <button
+                      onClick={() => setModalContent({ type: 'inference_params', data: item.inference_params })}
+                      className="action-btn"
+                      style={{
+                        padding: '4px 6px',
+                        fontSize: '10px',
+                        background: 'var(--surface)',
+                        border: '1px solid var(--border)',
+                        borderRadius: '4px',
+                        color: 'var(--text)',
+                        cursor: 'pointer',
+                        transition: 'all 0.2s ease',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '3px',
+                        whiteSpace: 'nowrap',
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.background = 'var(--hover-bg)';
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.background = 'var(--surface)';
+                      }}
+                      title="View inference parameters (latency, model config, etc.)"
+                    >
+                      <Clock size={12} style={{ flexShrink: 0 }} />
+                      <span className="btn-text">Params</span>
                     </button>
                   </div>
                 </td>
@@ -377,6 +464,10 @@ const FeedbackRenderer: React.FC<{ data: any }> = ({ data }) => {
   const evaluations = data.evaluations || {};
   const questionId = Object.keys(evaluations)[0];
   const evalData = evaluations[questionId] || {};
+
+  // Check if this is version 2.0.0 with inceptbench_new_evaluation
+  const isVersion2 = evalData.inceptbench_new_evaluation !== undefined;
+  const newEval = evalData.inceptbench_new_evaluation || {};
 
   const ScoreCard: React.FC<{ label: string; value: number | string; color?: string }> = ({ label, value, color }) => (
     <div style={{
@@ -462,6 +553,183 @@ const FeedbackRenderer: React.FC<{ data: any }> = ({ data }) => {
     return 'var(--error)';
   };
 
+  // Render Version 2.0.0 format
+  if (isVersion2) {
+    const overall = newEval.overall || {};
+    
+    // Dimension keys to display (excluding special fields)
+    const dimensionKeys = Object.keys(newEval).filter(key => 
+      !['overall', 'content_type', 'weighted_score', 'subcontent_evaluations'].includes(key) &&
+      typeof newEval[key] === 'object' && 
+      newEval[key] !== null &&
+      'score' in newEval[key]
+    );
+
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+        {/* Overall Summary */}
+        <Section title="📊 Overall Evaluation" icon="">
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '12px', marginBottom: '16px' }}>
+            <ScoreCard label="Overall Score" value={evalData.score || 0} color={getScoreColor(evalData.score || 0)} />
+            {overall.score !== undefined && (
+              <ScoreCard label="Evaluation Score" value={overall.score} color={getScoreColor(overall.score)} />
+            )}
+            {newEval.weighted_score !== undefined && (
+              <ScoreCard label="Weighted Score" value={newEval.weighted_score} color={getScoreColor(newEval.weighted_score)} />
+            )}
+            {newEval.content_type && (
+              <ScoreCard label="Content Type" value={newEval.content_type.toUpperCase()} />
+            )}
+          </div>
+          
+          {overall.reasoning && (
+            <div style={{ 
+              marginTop: '12px',
+              padding: '12px',
+              background: 'var(--background)',
+              borderRadius: '6px',
+              borderLeft: '3px solid var(--secondary)'
+            }}>
+              <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '6px', fontWeight: '600' }}>
+                OVERALL REASONING
+              </div>
+              <p style={{ fontSize: '13px', lineHeight: '1.6', color: 'var(--text)', margin: 0 }}>
+                {overall.reasoning}
+              </p>
+            </div>
+          )}
+
+          {overall.suggested_improvements && (
+            <div style={{ 
+              marginTop: '12px',
+              padding: '12px',
+              background: 'rgba(245, 158, 11, 0.05)',
+              borderRadius: '6px',
+              borderLeft: '3px solid var(--warning)'
+            }}>
+              <div style={{ fontSize: '11px', color: 'var(--warning)', marginBottom: '6px', fontWeight: '600' }}>
+                💡 SUGGESTED IMPROVEMENTS
+              </div>
+              <p style={{ fontSize: '13px', lineHeight: '1.6', color: 'var(--text)', margin: 0 }}>
+                {overall.suggested_improvements}
+              </p>
+            </div>
+          )}
+        </Section>
+
+        {/* Dimension Scores */}
+        {dimensionKeys.length > 0 && (
+          <Section title="📈 Dimension Scores" icon="">
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px' }}>
+              {dimensionKeys.map(key => {
+                const dimension = newEval[key];
+                const score = dimension.score;
+                return (
+                  <div key={key} style={{
+                    padding: '8px 12px',
+                    background: 'var(--background)',
+                    border: '1px solid var(--border)',
+                    borderRadius: '6px',
+                  }}>
+                    <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px', textTransform: 'capitalize' }}>
+                      {key.replace(/_/g, ' ')}
+                    </div>
+                    <div style={{ fontSize: '16px', fontWeight: '600', color: getScoreColor(score) }}>
+                      {(score * 100).toFixed(0)}%
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </Section>
+        )}
+
+        {/* Detailed Dimensions */}
+        {dimensionKeys.map(key => {
+          const dimension = newEval[key];
+          if (!dimension.reasoning && !dimension.suggested_improvements) return null;
+          
+          return (
+            <Section key={key} title={`${key.replace(/_/g, ' ').split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')}`} icon="">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
+                <Badge 
+                  text={`${(dimension.score * 100).toFixed(0)}%`} 
+                  type={dimension.score >= 0.9 ? 'success' : dimension.score >= 0.8 ? 'warning' : 'error'} 
+                />
+              </div>
+              
+              {dimension.reasoning && (
+                <div style={{ 
+                  marginBottom: '12px',
+                  padding: '12px',
+                  background: 'var(--background)',
+                  borderRadius: '6px',
+                  fontSize: '13px',
+                  lineHeight: '1.6'
+                }}>
+                  <strong style={{ color: 'var(--text-secondary)' }}>Reasoning:</strong>
+                  <p style={{ margin: '6px 0 0 0', color: 'var(--text)' }}>{dimension.reasoning}</p>
+                </div>
+              )}
+              
+              {dimension.suggested_improvements && (
+                <div style={{ 
+                  padding: '12px',
+                  background: 'rgba(245, 158, 11, 0.05)',
+                  borderRadius: '6px',
+                  borderLeft: '3px solid var(--warning)',
+                  fontSize: '13px',
+                  lineHeight: '1.6'
+                }}>
+                  <strong style={{ color: 'var(--warning)' }}>💡 Suggested Improvements:</strong>
+                  <p style={{ margin: '6px 0 0 0', color: 'var(--text)' }}>{dimension.suggested_improvements}</p>
+                </div>
+              )}
+            </Section>
+          );
+        })}
+
+        {/* Subcontent Evaluations */}
+        {newEval.subcontent_evaluations && (
+          <Section title="📋 Subcontent Evaluations" icon="">
+            <pre style={{
+              background: 'var(--background)',
+              padding: '12px',
+              borderRadius: '6px',
+              fontSize: '12px',
+              lineHeight: '1.6',
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-word',
+              color: 'var(--text)',
+              border: '1px solid var(--border)',
+              margin: 0,
+            }}>
+              {JSON.stringify(newEval.subcontent_evaluations, null, 2)}
+            </pre>
+          </Section>
+        )}
+
+        {/* Metadata */}
+        <div style={{
+          padding: '12px',
+          background: 'var(--surface)',
+          border: '1px solid var(--border)',
+          borderRadius: '8px',
+          fontSize: '11px',
+          color: 'var(--text-secondary)',
+          display: 'flex',
+          gap: '16px',
+          flexWrap: 'wrap',
+        }}>
+          {data.request_id && <div><strong>Request ID:</strong> {data.request_id}</div>}
+          {data.inceptbench_version && <div><strong>Version:</strong> {data.inceptbench_version}</div>}
+          {data.evaluation_time_seconds && <div><strong>Evaluation Time:</strong> {data.evaluation_time_seconds.toFixed(2)}s</div>}
+        </div>
+      </div>
+    );
+  }
+
+  // Render Version 1.x format (original code)
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
       {/* Overall Summary */}
@@ -875,10 +1143,10 @@ const LookAtData: React.FC = () => {
   const [selectedEvaluation, setSelectedEvaluation] = useState<EvaluationData | null>(null);
 
   // Three section view state
-  const [selectedSection, setSelectedSection] = useState<'zero' | 'below' | 'passed'>('zero');
+  const [selectedSection, setSelectedSection] = useState<'zero' | 'below' | 'passed'>('below');
   
   // Modal state
-  const [modalContent, setModalContent] = useState<{ type: 'response' | 'prompt' | 'feedback'; data: any } | null>(null);
+  const [modalContent, setModalContent] = useState<{ type: 'raw_response' | 'response' | 'prompt' | 'feedback' | 'inference_params'; data: any } | null>(null);
   const [summaryDifficulty, setSummaryDifficulty] = useState<string | null>(null);
 
   // Get current filters from URL/context - simplified for standalone page
@@ -935,6 +1203,24 @@ const LookAtData: React.FC = () => {
       setSelectedSubject(subject);
     }
   }, [searchParams]);
+
+  // Auto-select best section when evaluations are loaded
+  useEffect(() => {
+    if (evaluations.length > 0) {
+      const zeroCnt = evaluations.filter(e => e.evaluator_score === 0).length;
+      const belowCnt = evaluations.filter(e => e.evaluator_score > 0 && e.evaluator_score < 0.85).length;
+      const passedCnt = evaluations.filter(e => e.evaluator_score >= 0.85).length;
+
+      // Intelligently select the section with the most data
+      if (belowCnt > 0) {
+        setSelectedSection('below');
+      } else if (passedCnt > 0) {
+        setSelectedSection('passed');
+      } else if (zeroCnt > 0) {
+        setSelectedSection('zero');
+      }
+    }
+  }, [evaluations]);
 
   const fetchEvaluations = async () => {
     if (!evalExperimentTracker) {
@@ -1677,17 +1963,37 @@ const LookAtData: React.FC = () => {
                           const evaluationData = item.evaluator_parsed_response?.evaluations || {};
                           const questionId = Object.keys(evaluationData)[0];
                           const evalData = evaluationData[questionId] || {};
-                          const qualityScores = evalData.ti_question_qa?.scores || {};
                           
-                          // Add ti_question_qa scores
-                          Object.entries(qualityScores).forEach(([key, score]) => {
-                            if ((score as number) < 0.85) {
-                              const metricName = key.replace(/_/g, ' ');
-                              tagCounts[metricName] = (tagCounts[metricName] || 0) + 1;
-                            }
-                          });
+                          // Check if this is version 2.0.0
+                          const isVersion2 = evalData.inceptbench_new_evaluation !== undefined;
                           
-                          // Add image quality scores
+                          if (isVersion2) {
+                            const newEval = evalData.inceptbench_new_evaluation;
+                            // Add dimension scores from version 2.0.0
+                            Object.keys(newEval).forEach(key => {
+                              if (key === 'overall' || key === 'content_type' || key === 'weighted_score' || key === 'subcontent_evaluations') return;
+                              const dimension = newEval[key];
+                              if (typeof dimension === 'object' && dimension !== null && 'score' in dimension) {
+                                if (dimension.score < 0.85) {
+                                  const metricName = key.replace(/_/g, ' ');
+                                  tagCounts[metricName] = (tagCounts[metricName] || 0) + 1;
+                                }
+                              }
+                            });
+                          } else {
+                            // Version 1.x handling
+                            const qualityScores = evalData.ti_question_qa?.scores || {};
+                            
+                            // Add ti_question_qa scores
+                            Object.entries(qualityScores).forEach(([key, score]) => {
+                              if ((score as number) < 0.85) {
+                                const metricName = key.replace(/_/g, ' ');
+                                tagCounts[metricName] = (tagCounts[metricName] || 0) + 1;
+                              }
+                            });
+                          }
+                          
+                          // Add image quality scores (for both versions)
                           const imageQualityScores = evalData.image_quality?.scores || {};
                           Object.entries(imageQualityScores).forEach(([key, score]) => {
                             if ((score as number) < 0.85) {
@@ -1835,17 +2141,37 @@ const LookAtData: React.FC = () => {
                     const evaluationData = item.evaluator_parsed_response?.evaluations || {};
                     const questionId = Object.keys(evaluationData)[0];
                     const evalData = evaluationData[questionId] || {};
-                    const qualityScores = evalData.ti_question_qa?.scores || {};
                     
-                    // Add ti_question_qa scores
-                    Object.entries(qualityScores).forEach(([key, score]) => {
-                      if ((score as number) < 0.85) {
-                        const metricName = key.replace(/_/g, ' ');
-                        tagCounts[metricName] = (tagCounts[metricName] || 0) + 1;
-                      }
-                    });
+                    // Check if this is version 2.0.0
+                    const isVersion2 = evalData.inceptbench_new_evaluation !== undefined;
                     
-                    // Add image quality scores
+                    if (isVersion2) {
+                      const newEval = evalData.inceptbench_new_evaluation;
+                      // Add dimension scores from version 2.0.0
+                      Object.keys(newEval).forEach(key => {
+                        if (key === 'overall' || key === 'content_type' || key === 'weighted_score' || key === 'subcontent_evaluations') return;
+                        const dimension = newEval[key];
+                        if (typeof dimension === 'object' && dimension !== null && 'score' in dimension) {
+                          if (dimension.score < 0.85) {
+                            const metricName = key.replace(/_/g, ' ');
+                            tagCounts[metricName] = (tagCounts[metricName] || 0) + 1;
+                          }
+                        }
+                      });
+                    } else {
+                      // Version 1.x handling
+                      const qualityScores = evalData.ti_question_qa?.scores || {};
+
+                      // Add ti_question_qa scores
+                      Object.entries(qualityScores).forEach(([key, score]) => {
+                        if ((score as number) < 0.85) {
+                          const metricName = key.replace(/_/g, ' ');
+                          tagCounts[metricName] = (tagCounts[metricName] || 0) + 1;
+                        }
+                      });
+                    }
+
+                    // Add image quality scores (for both versions)
                     const imageQualityScores = evalData.image_quality?.scores || {};
                     Object.entries(imageQualityScores).forEach(([key, score]) => {
                       if ((score as number) < 0.85) {
@@ -1956,6 +2282,12 @@ const LookAtData: React.FC = () => {
               }}
             >
               <h3 style={{ fontSize: '18px', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                {modalContent.type === 'raw_response' && (
+                  <>
+                    <Code size={20} color="var(--text-secondary)" />
+                    Model Raw Response
+                  </>
+                )}
                 {modalContent.type === 'response' && (
                   <>
                     <Eye size={20} color="var(--primary)" />
@@ -1972,6 +2304,12 @@ const LookAtData: React.FC = () => {
                   <>
                     <MessageSquare size={20} color="var(--success)" />
                     Evaluator Feedback
+                  </>
+                )}
+                {modalContent.type === 'inference_params' && (
+                  <>
+                    <Clock size={20} color="var(--warning)" />
+                    Inference Parameters
                   </>
                 )}
               </h3>
@@ -2075,17 +2413,56 @@ const DifficultySummaryModal: React.FC<{
       if (!evalResponse || !evalResponse.evaluations) return;
 
       const evalData = Object.values(evalResponse.evaluations)[0] as any;
-      if (!evalData || !evalData.ti_question_qa?.suggested_improvements) return;
+      if (!evalData) return;
 
-      evalData.ti_question_qa.suggested_improvements.forEach((improvement: string) => {
-        const existing = suggestions.find((s) => s.text === improvement);
-        if (existing) {
-          existing.count += 1;
-          existing.questionIds.push(item.question_id);
-        } else {
-          suggestions.push({ text: improvement, count: 1, questionIds: [item.question_id] });
+      // Check if this is version 2.0.0 with inceptbench_new_evaluation
+      const isVersion2 = evalData.inceptbench_new_evaluation !== undefined;
+
+      if (isVersion2) {
+        const newEval = evalData.inceptbench_new_evaluation;
+        
+        // Collect overall suggested improvements
+        if (newEval.overall?.suggested_improvements) {
+          const improvement = newEval.overall.suggested_improvements;
+          const existing = suggestions.find((s) => s.text === improvement);
+          if (existing) {
+            existing.count += 1;
+            existing.questionIds.push(item.question_id);
+          } else {
+            suggestions.push({ text: improvement, count: 1, questionIds: [item.question_id] });
+          }
         }
-      });
+
+        // Collect dimension-level suggested improvements
+        Object.keys(newEval).forEach(key => {
+          if (key === 'overall' || key === 'content_type' || key === 'weighted_score' || key === 'subcontent_evaluations') return;
+          
+          const dimension = newEval[key];
+          if (typeof dimension === 'object' && dimension !== null && dimension.suggested_improvements) {
+            const improvement = dimension.suggested_improvements;
+            const existing = suggestions.find((s) => s.text === improvement);
+            if (existing) {
+              existing.count += 1;
+              existing.questionIds.push(item.question_id);
+            } else {
+              suggestions.push({ text: improvement, count: 1, questionIds: [item.question_id] });
+            }
+          }
+        });
+      } else {
+        // Version 1.x handling
+        if (!evalData.ti_question_qa?.suggested_improvements) return;
+
+        evalData.ti_question_qa.suggested_improvements.forEach((improvement: string) => {
+          const existing = suggestions.find((s) => s.text === improvement);
+          if (existing) {
+            existing.count += 1;
+            existing.questionIds.push(item.question_id);
+          } else {
+            suggestions.push({ text: improvement, count: 1, questionIds: [item.question_id] });
+          }
+        });
+      }
     });
 
     suggestions.sort((a, b) => b.count - a.count);

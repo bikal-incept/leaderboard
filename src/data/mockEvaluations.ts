@@ -1,5 +1,80 @@
 export const mockEvaluations = [
   {
+    request_id: "e31b318e-1051-470f-a81a-7ba28f538b9e",
+    evaluations: {
+      ela_3_l_3_1_g_mcq_easy_001: {
+        score: 0.95,
+        inceptbench_new_evaluation: {
+          overall: {
+            score: 0.95,
+            reasoning: "Strong, well-aligned Grade 3 ELA item assessing comparative vs. superlative adjectives. The prompt and sentence context clearly cue the superlative, the keyed answer is correct, and the explanation is accurate. Choices are plausible and diagnostic of a common misconception. Minor refinements could further strengthen clarity and diagnostic power.",
+            suggested_improvements: "Optionally specify the base adjective in the prompt (e.g., \"the correct form of the adjective tall\") and consider adding one more plausible distractor (e.g., \"more tall\") to better diagnose misconceptions. Also ensure curriculum metadata descriptions are accurate and consistent."
+          },
+          content_type: "mcq",
+          weighted_score: 1.0,
+          factual_accuracy: {
+            score: 1.0,
+            reasoning: "The sentence context (\"the\" and a set/group) correctly requires the superlative form. \"Tallest\" is the correct answer. The explanation accurately describes why the superlative is needed.",
+            suggested_improvements: null
+          },
+          stimulus_quality: {
+            score: 1.0,
+            reasoning: "No stimulus required or included; appropriate for the skill assessed.",
+            suggested_improvements: null
+          },
+          clarity_precision: {
+            score: 1.0,
+            reasoning: "The task and sentence are clear and unambiguous. Students know to choose between comparative and superlative forms.",
+            suggested_improvements: null
+          },
+          passage_reference: {
+            score: 1.0,
+            reasoning: "No external passage needed; the item is fully self-contained.",
+            suggested_improvements: null
+          },
+          distractor_quality: {
+            score: 1.0,
+            reasoning: "Both options are grammatically parallel and plausible; neither is obviously wrong without understanding the rule. Length and specificity are balanced.",
+            suggested_improvements: null
+          },
+          curriculum_alignment: {
+            score: 1.0,
+            reasoning: "Aligns with CCSS L.3.1.g (use of comparative and superlative adjectives/adverbs). The item asks students to choose the correct form based on context, which fits the standard's intent.",
+            suggested_improvements: null
+          },
+          difficulty_alignment: {
+            score: 1.0,
+            reasoning: "Appropriate easy-level item (DoK 1–2) for Grade 3 grammar conventions.",
+            suggested_improvements: null
+          },
+          educational_accuracy: {
+            score: 1.0,
+            reasoning: "Directly assesses selecting the correct adjective form (comparative vs. superlative) appropriate for Grade 3 language standards and an easy difficulty level.",
+            suggested_improvements: null
+          },
+          localization_quality: {
+            score: 1.0,
+            reasoning: "Culturally neutral and age-appropriate context. No sensitive or region-specific content required to solve.",
+            suggested_improvements: null
+          },
+          reveals_misconceptions: {
+            score: 1.0,
+            reasoning: "Contrasting \"taller\" vs. \"tallest\" targets the common error of using a comparative when a superlative is required by a definite article and group context.",
+            suggested_improvements: null
+          },
+          subcontent_evaluations: null,
+          mastery_learning_alignment: {
+            score: 1.0,
+            reasoning: "Assesses conceptual understanding of when to use superlative vs. comparative forms and provides diagnostic insight into a common grammar misconception.",
+            suggested_improvements: null
+          }
+        }
+      }
+    },
+    inceptbench_version: "2.0.0",
+    evaluation_time_seconds: 40.999409675598145
+  },
+  {
     request_id: "10837201-7f10-40b2-bae0-5d3ac0642ff6",
     evaluations: {
       standard_math_3_oa_a_2_mcq_easy_002: {

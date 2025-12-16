@@ -153,3 +153,31 @@ body {
 .chart-bar-container:hover .chart-tooltip {
   opacity: 1 !important;
 }
+
+/* Responsive action buttons - hide text on smaller screens */
+.action-btn {
+  min-width: auto;
+}
+
+.action-btn .btn-text {
+  display: inline;
+}
+
+/* Hide button text on screens smaller than 1400px */
+@media (max-width: 1400px) {
+  .action-btn .btn-text {
+    display: none;
+  }
+  
+  .action-btn {
+    padding: 4px !important;
+  }
+}
+
+/* Show button text on hover for medium screens */
+@media (min-width: 1200px) and (max-width: 1400px) {
+  .action-btn:hover .btn-text {
+    display: inline;
+    animation: fadeIn 0.2s ease-out;
+  }
+}

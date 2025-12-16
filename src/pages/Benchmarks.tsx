@@ -2,6 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowUpDown, FileText, Copy, Check, ChevronDown, ChevronUp, Filter, Eye, X, TrendingUp, Download } from 'lucide-react';
 import { leaderboardData, type LeaderboardRow } from '../data/leaderboardData';
+import { shouldHighlightExperiment, isExperimentBlocked } from '../config/blockedExperiments';
+import { INCEPTLABS_EXPERIMENTS, FIELD_EXPERIMENTS, isInceptLabsExperiment, isFieldExperiment } from '../config/comparisonExperiments';
 
 const SUBJECTS = ['ela', 'math'] as const;
 type Subject = (typeof SUBJECTS)[number];
@@ -10,6 +12,83 @@ type SortConfig = {
   key: 'rank' | 'model' | 'score' | 'votes';
   direction: 'asc' | 'desc';
 };
+
+// Comparison data types
+interface ComparisonStats {
+  overallPercentage: number;
+  totalQuestionsAboveThreshold: number;
+  totalQuestions: number;
+  p10: number;
+  p90: number;
+  byDifficulty: {
+    Easy: { percentage: number; questionsAboveThreshold: number; totalQuestions: number } | null;
+    Medium: { percentage: number; questionsAboveThreshold: number; totalQuestions: number } | null;
+    Hard: { percentage: number; questionsAboveThreshold: number; totalQuestions: number } | null;
+  };
+}
+
+// Helper function to calculate percentile
+function calculatePercentile(values: number[], percentile: number): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const index = (percentile / 100) * (sorted.length - 1);
+  const lower = Math.floor(index);
+  const upper = Math.ceil(index);
+  const weight = index % 1;
+  
+  if (lower === upper) {
+    return sorted[lower];
+  }
+  
+  return sorted[lower] * (1 - weight) + sorted[upper] * weight;
+}
+
+// Helper function to calculate comparison stats for a group of experiments
+function calculateComparisonStats(rows: LeaderboardRow[], experimentConfig: typeof INCEPTLABS_EXPERIMENTS): ComparisonStats {
+  const easyRow = rows.find(r => r.model === experimentConfig.easy && r.difficulty === 'Easy');
+  const mediumRow = rows.find(r => r.model === experimentConfig.medium && r.difficulty === 'Medium');
+  const hardRow = rows.find(r => r.model === experimentConfig.hard && r.difficulty === 'Hard');
+  
+  const allRows = [easyRow, mediumRow, hardRow].filter((r): r is LeaderboardRow => r !== undefined);
+  
+  // Calculate overall stats
+  const totalQuestionsAboveThreshold = allRows.reduce((sum, r) => sum + r.questionsAboveThreshold, 0);
+  const totalQuestions = allRows.reduce((sum, r) => sum + r.totalQuestions, 0);
+  const overallPercentage = totalQuestions > 0 ? (totalQuestionsAboveThreshold / totalQuestions) * 100 : 0;
+  
+  // Calculate percentiles from the percentages of available experiments
+  const percentages = allRows.map(r => r.percentage);
+  const p10 = calculatePercentile(percentages, 10);
+  const p90 = calculatePercentile(percentages, 90);
+  
+  // By difficulty stats
+  const byDifficulty = {
+    Easy: easyRow ? {
+      percentage: easyRow.percentage,
+      questionsAboveThreshold: easyRow.questionsAboveThreshold,
+      totalQuestions: easyRow.totalQuestions
+    } : null,
+    Medium: mediumRow ? {
+      percentage: mediumRow.percentage,
+      questionsAboveThreshold: mediumRow.questionsAboveThreshold,
+      totalQuestions: mediumRow.totalQuestions
+    } : null,
+    Hard: hardRow ? {
+      percentage: hardRow.percentage,
+      questionsAboveThreshold: hardRow.questionsAboveThreshold,
+      totalQuestions: hardRow.totalQuestions
+    } : null,
+  };
+  
+  return {
+    overallPercentage,
+    totalQuestionsAboveThreshold,
+    totalQuestions,
+    p10,
+    p90,
+    byDifficulty,
+  };
+}
 
 const Benchmarks: React.FC = () => {
   const navigate = useNavigate();
@@ -235,9 +314,16 @@ const Benchmarks: React.FC = () => {
     };
   }, [selectedSubject, appliedGradeLevel, appliedQuestionType, appliedMinTotalQuestions]);
 
-  const subjectData = leaderboardRows.filter(
-    row => (row.subject || '').toLowerCase() === selectedSubject
-  );
+  const subjectData = leaderboardRows
+    .filter(row => (row.subject || '').toLowerCase() === selectedSubject)
+    .filter(row => {
+      // Filter out blocked experiments
+      const isBlocked = isExperimentBlocked(row.model, row.actualModel);
+      if (isBlocked) {
+        console.log('[Benchmarks] Blocking experiment:', row.model);
+      }
+      return !isBlocked;
+    });
   console.log(
     `[Leaderboard] Filtered ${subjectData.length} rows for "${selectedSubject}" from ${leaderboardRows.length} total rows`
   );
@@ -250,6 +336,10 @@ const Benchmarks: React.FC = () => {
     return acc;
   }, {} as Record<string, LeaderboardRow[]>);
 
+  // Calculate comparison stats for InceptLabs vs Field
+  const inceptLabsStats = calculateComparisonStats(subjectData, INCEPTLABS_EXPERIMENTS);
+  const fieldStats = calculateComparisonStats(subjectData, FIELD_EXPERIMENTS);
+
   const getPercentageColor = (percentage: number) => {
     if (percentage >= 90) return 'var(--success)';
     if (percentage >= 85) return 'var(--warning)';
@@ -259,6 +349,461 @@ const Benchmarks: React.FC = () => {
   const openDifficultyModal = (difficulty: string) => {
     setSelectedDifficulty(difficulty);
     setDifficultyModalOpen(true);
+  };
+
+  // Comparison Section Component
+  const ComparisonSection: React.FC = () => {
+    const hasInceptData = inceptLabsStats.totalQuestions > 0;
+    const hasFieldData = fieldStats.totalQuestions > 0;
+    
+    if (!hasInceptData && !hasFieldData) {
+      return (
+        <div style={{
+          background: 'var(--surface)',
+          border: '1px solid var(--border)',
+          borderRadius: '12px',
+          padding: '24px',
+          marginBottom: '32px',
+          textAlign: 'center',
+        }}>
+          <div style={{ color: 'var(--text-secondary)', fontSize: '14px' }}>
+            No comparison data available. Please configure experiment names in comparisonExperiments.ts
+          </div>
+        </div>
+      );
+    }
+
+    // Helper to render horizontal bar chart
+    const HorizontalBarChart: React.FC<{
+      label: string;
+      inceptValue: number;
+      fieldValue: number;
+      maxValue?: number;
+    }> = ({ label, inceptValue, fieldValue, maxValue = 100 }) => {
+      return (
+        <div style={{ marginBottom: '24px' }}>
+          <div style={{
+            fontSize: '13px',
+            fontWeight: '600',
+            color: 'var(--text)',
+            marginBottom: '12px',
+            textTransform: 'uppercase',
+            letterSpacing: '0.5px',
+          }}>
+            {label}
+          </div>
+          
+          {/* InceptLabs Bar */}
+          <div style={{ marginBottom: '12px' }}>
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '12px',
+              marginBottom: '6px',
+            }}>
+              <div style={{
+                fontSize: '12px',
+                fontWeight: '600',
+                color: 'var(--primary)',
+                minWidth: '100px',
+              }}>
+                InceptLabs
+              </div>
+              <div style={{
+                flex: 1,
+                height: '32px',
+                background: 'rgba(255, 255, 255, 0.05)',
+                borderRadius: '6px',
+                position: 'relative',
+                overflow: 'hidden',
+              }}>
+                <div style={{
+                  position: 'absolute',
+                  left: 0,
+                  top: 0,
+                  bottom: 0,
+                  width: `${(inceptValue / maxValue) * 100}%`,
+                  background: 'linear-gradient(90deg, #9e7fff 0%, #8b5cf6 100%)',
+                  borderRadius: '6px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'flex-end',
+                  paddingRight: '12px',
+                  transition: 'width 0.3s ease',
+                }}>
+                  <span style={{
+                    fontSize: '13px',
+                    fontWeight: '700',
+                    color: 'white',
+                    textShadow: '0 1px 3px rgba(0, 0, 0, 0.5)',
+                  }}>
+                    {inceptValue.toFixed(1)}%
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Field Bar */}
+          <div>
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '12px',
+              marginBottom: '6px',
+            }}>
+              <div style={{
+                fontSize: '12px',
+                fontWeight: '600',
+                color: 'rgb(34, 197, 94)',
+                minWidth: '100px',
+              }}>
+                The Field
+              </div>
+              <div style={{
+                flex: 1,
+                height: '32px',
+                background: 'rgba(255, 255, 255, 0.05)',
+                borderRadius: '6px',
+                position: 'relative',
+                overflow: 'hidden',
+              }}>
+                <div style={{
+                  position: 'absolute',
+                  left: 0,
+                  top: 0,
+                  bottom: 0,
+                  width: `${(fieldValue / maxValue) * 100}%`,
+                  background: 'linear-gradient(90deg, #22c55e 0%, #16a34a 100%)',
+                  borderRadius: '6px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'flex-end',
+                  paddingRight: '12px',
+                  transition: 'width 0.3s ease',
+                }}>
+                  <span style={{
+                    fontSize: '13px',
+                    fontWeight: '700',
+                    color: 'white',
+                    textShadow: '0 1px 3px rgba(0, 0, 0, 0.5)',
+                  }}>
+                    {fieldValue.toFixed(1)}%
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    };
+
+    return (
+      <div style={{ marginBottom: '32px' }}>
+        {/* Overall Comparison Card */}
+        <div style={{
+          background: 'linear-gradient(135deg, rgba(158, 127, 255, 0.08) 0%, rgba(34, 197, 94, 0.08) 100%)',
+          border: '1px solid var(--border)',
+          borderRadius: '16px',
+          overflow: 'hidden',
+          marginBottom: '24px',
+        }}>
+          {/* Header */}
+          <div style={{
+            padding: '20px 24px',
+            borderBottom: '1px solid var(--border)',
+            background: 'rgba(0, 0, 0, 0.2)',
+          }}>
+            <h2 style={{
+              fontSize: '18px',
+              fontWeight: '700',
+              color: 'var(--text)',
+              margin: 0,
+              display: 'flex',
+              alignItems: 'center',
+              gap: '12px',
+            }}>
+              <TrendingUp size={20} />
+              InceptLabs vs Field - Overall Performance
+            </h2>
+            <p style={{
+              fontSize: '12px',
+              color: 'var(--text-secondary)',
+              margin: '4px 0 0 32px',
+            }}>
+              Aggregated metrics across all difficulty levels
+            </p>
+          </div>
+
+          {/* Overall Metrics Row */}
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: '1fr 1fr',
+            gap: '1px',
+            background: 'var(--border)',
+            borderBottom: '1px solid var(--border)',
+          }}>
+            {/* InceptLabs Overall */}
+            <div style={{
+              padding: '24px 32px',
+              background: 'rgba(158, 127, 255, 0.05)',
+            }}>
+              <div style={{
+                fontSize: '12px',
+                fontWeight: '600',
+                color: 'var(--primary)',
+                marginBottom: '8px',
+                textTransform: 'uppercase',
+                letterSpacing: '0.5px',
+              }}>
+                InceptLabs - Overall
+              </div>
+              {hasInceptData ? (
+                <>
+                  <div style={{
+                    fontSize: '32px',
+                    fontWeight: '700',
+                    color: 'var(--text)',
+                    marginBottom: '4px',
+                  }}>
+                    {inceptLabsStats.overallPercentage.toFixed(1)}%
+                  </div>
+                  <div style={{
+                    fontSize: '13px',
+                    color: 'var(--text-secondary)',
+                    fontFamily: 'monospace',
+                  }}>
+                    {inceptLabsStats.totalQuestionsAboveThreshold}/{inceptLabsStats.totalQuestions} questions
+                  </div>
+                </>
+              ) : (
+                <div style={{ color: 'var(--text-secondary)', fontSize: '14px' }}>No data</div>
+              )}
+            </div>
+
+            {/* Field Overall */}
+            <div style={{
+              padding: '24px 32px',
+              background: 'rgba(34, 197, 94, 0.05)',
+            }}>
+              <div style={{
+                fontSize: '12px',
+                fontWeight: '600',
+                color: 'rgb(34, 197, 94)',
+                marginBottom: '8px',
+                textTransform: 'uppercase',
+                letterSpacing: '0.5px',
+              }}>
+                The Field - Overall
+              </div>
+              {hasFieldData ? (
+                <>
+                  <div style={{
+                    fontSize: '32px',
+                    fontWeight: '700',
+                    color: 'var(--text)',
+                    marginBottom: '4px',
+                  }}>
+                    {fieldStats.overallPercentage.toFixed(1)}%
+                  </div>
+                  <div style={{
+                    fontSize: '13px',
+                    color: 'var(--text-secondary)',
+                    fontFamily: 'monospace',
+                  }}>
+                    {fieldStats.totalQuestionsAboveThreshold}/{fieldStats.totalQuestions} questions
+                  </div>
+                </>
+              ) : (
+                <div style={{ color: 'var(--text-secondary)', fontSize: '14px' }}>No data</div>
+              )}
+            </div>
+          </div>
+
+          {/* Horizontal Bar Charts for P10 and P90 */}
+          <div style={{
+            padding: '32px',
+            background: 'var(--surface)',
+          }}>
+            {hasInceptData && hasFieldData ? (
+              <>
+                <HorizontalBarChart
+                  label="P10 (10th Percentile)"
+                  inceptValue={inceptLabsStats.p10}
+                  fieldValue={fieldStats.p10}
+                />
+                <HorizontalBarChart
+                  label="P90 (90th Percentile)"
+                  inceptValue={inceptLabsStats.p90}
+                  fieldValue={fieldStats.p90}
+                />
+              </>
+            ) : (
+              <div style={{ textAlign: 'center', color: 'var(--text-secondary)', fontSize: '14px' }}>
+                Insufficient data for percentile comparison
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Per-Difficulty Breakdown */}
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(3, 1fr)',
+          gap: '16px',
+        }}>
+          {(['Easy', 'Medium', 'Hard'] as const).map((difficulty) => {
+            const inceptData = inceptLabsStats.byDifficulty[difficulty];
+            const fieldData = fieldStats.byDifficulty[difficulty];
+            
+            // Get experiment names for this difficulty
+            const difficultyKey = difficulty.toLowerCase() as 'easy' | 'medium' | 'hard';
+            const inceptExperimentName = INCEPTLABS_EXPERIMENTS[difficultyKey];
+            const fieldExperimentName = FIELD_EXPERIMENTS[difficultyKey];
+            
+            return (
+              <div
+                key={difficulty}
+                style={{
+                  background: 'var(--surface)',
+                  border: '1px solid var(--border)',
+                  borderRadius: '12px',
+                  overflow: 'hidden',
+                }}
+              >
+                {/* Difficulty Header */}
+                <div style={{
+                  padding: '16px 20px',
+                  borderBottom: '1px solid var(--border)',
+                  background: 'rgba(255, 255, 255, 0.02)',
+                }}>
+                  <h3 style={{
+                    fontSize: '14px',
+                    fontWeight: '600',
+                    color: 'var(--text)',
+                    margin: 0,
+                  }}>
+                    {difficulty}
+                  </h3>
+                </div>
+
+                {/* Comparison Grid */}
+                <div style={{
+                  display: 'grid',
+                  gridTemplateColumns: '1fr 1fr',
+                  gap: '1px',
+                  background: 'var(--border)',
+                }}>
+                  {/* InceptLabs */}
+                  <div style={{
+                    padding: '20px 16px',
+                    background: 'rgba(158, 127, 255, 0.03)',
+                  }}>
+                    <div style={{
+                      fontSize: '11px',
+                      color: 'var(--primary)',
+                      marginBottom: '8px',
+                      fontWeight: '600',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.5px',
+                    }}>
+                      InceptLabs
+                    </div>
+                    <div style={{
+                      fontSize: '11px',
+                      color: 'var(--text-secondary)',
+                      marginBottom: '12px',
+                      wordBreak: 'break-word',
+                      lineHeight: '1.4',
+                    }}>
+                      {inceptExperimentName}
+                    </div>
+                    {inceptData ? (
+                      <>
+                        <div style={{
+                          fontSize: '24px',
+                          fontWeight: '700',
+                          color: 'var(--text)',
+                          marginBottom: '4px',
+                        }}>
+                          {inceptData.percentage.toFixed(1)}%
+                        </div>
+                        <div style={{
+                          fontSize: '12px',
+                          color: 'var(--text-secondary)',
+                          fontFamily: 'monospace',
+                        }}>
+                          {inceptData.questionsAboveThreshold}/{inceptData.totalQuestions}
+                        </div>
+                      </>
+                    ) : (
+                      <div style={{
+                        fontSize: '12px',
+                        color: 'var(--text-secondary)',
+                      }}>
+                        N/A
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Field */}
+                  <div style={{
+                    padding: '20px 16px',
+                    background: 'rgba(34, 197, 94, 0.03)',
+                  }}>
+                    <div style={{
+                      fontSize: '11px',
+                      color: 'rgb(34, 197, 94)',
+                      marginBottom: '8px',
+                      fontWeight: '600',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.5px',
+                    }}>
+                      Field
+                    </div>
+                    <div style={{
+                      fontSize: '11px',
+                      color: 'var(--text-secondary)',
+                      marginBottom: '12px',
+                      wordBreak: 'break-word',
+                      lineHeight: '1.4',
+                    }}>
+                      {fieldExperimentName}
+                    </div>
+                    {fieldData ? (
+                      <>
+                        <div style={{
+                          fontSize: '24px',
+                          fontWeight: '700',
+                          color: 'var(--text)',
+                          marginBottom: '4px',
+                        }}>
+                          {fieldData.percentage.toFixed(1)}%
+                        </div>
+                        <div style={{
+                          fontSize: '12px',
+                          color: 'var(--text-secondary)',
+                          fontFamily: 'monospace',
+                        }}>
+                          {fieldData.questionsAboveThreshold}/{fieldData.totalQuestions}
+                        </div>
+                      </>
+                    ) : (
+                      <div style={{
+                        fontSize: '12px',
+                        color: 'var(--text-secondary)',
+                      }}>
+                        N/A
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
   };
 
   const LeaderboardCard: React.FC<{
@@ -523,7 +1068,7 @@ const Benchmarks: React.FC = () => {
               className="custom-scrollbar"
               >
               {sortedExperiments.map((row, index) => {
-            const isIncept = row.model.toLowerCase() === 'incept';
+            const isIncept = shouldHighlightExperiment(row.model);
             const rank = index + 1;
             
             return (
@@ -1239,6 +1784,9 @@ const Benchmarks: React.FC = () => {
         </div>
       </div>
 
+      {/* InceptLabs vs Field Comparison */}
+      <ComparisonSection />
+
       {/* Leaderboard - Vertical Stack */}
       <div style={{
         display: 'flex',
@@ -1432,7 +1980,7 @@ const Benchmarks: React.FC = () => {
               {(groupedByDifficulty[selectedDifficulty] || [])
                 .sort((a, b) => b.percentage - a.percentage)
                 .map((row, index) => {
-                  const isIncept = row.model.toLowerCase() === 'incept';
+                  const isIncept = shouldHighlightExperiment(row.model);
                   const rank = index + 1;
                   
                   return (
@@ -1682,7 +2230,7 @@ const Benchmarks: React.FC = () => {
                   
                   {/* Table Rows */}
                   {topData.map((row, index) => {
-                    const isIncept = row.model.toLowerCase().includes('incept');
+                    const isIncept = shouldHighlightExperiment(row.model);
                     
                     return (
                       <div
@@ -1790,7 +2338,7 @@ const Benchmarks: React.FC = () => {
                 }}>
                   {topData.map((row, index) => {
                     const barWidthPercent = (row.percentage / maxPercentage) * 100;
-                    const isIncept = row.model.toLowerCase().includes('incept');
+                    const isIncept = shouldHighlightExperiment(row.model);
                     
                     return (
                       <div

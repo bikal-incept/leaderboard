@@ -25,7 +25,8 @@ export const LEADERBOARD_BY_SUBJECT = `
       qr.subject            AS subject,
       gq.question_type      AS question_type,
       COALESCE(
-          gq.inference_params->>'target_difficulty',
+          gq.model_parsed_response->>'difficulty',
+          gq.inference_params->'item_inference_params'->>'target_difficulty',
           gq.inference_params->>'difficulty_assigned',
           gq.inference_params->>'difficulty'
       )                     AS difficulty,
@@ -48,7 +49,8 @@ export const LEADERBOARD_BY_SUBJECT = `
       qr.subject,
       gq.question_type,
       COALESCE(
-          gq.inference_params->>'target_difficulty',
+          gq.model_parsed_response->>'difficulty',
+          gq.inference_params->'item_inference_params'->>'target_difficulty',
           gq.inference_params->>'difficulty_assigned',
           gq.inference_params->>'difficulty'
       )
@@ -65,6 +67,12 @@ export const LEADERBOARD_BY_SUBJECT = `
  * Ultra-fast pre-aggregated results from mv_leaderboard_stats_1_5_4.
  * This view is pre-filtered to evaluator_version '1.5.4' and pre-aggregated,
  * making queries nearly instant even with millions of rows in the base tables.
+ * 
+ * IMPORTANT: The materialized view must extract difficulty using the same priority order:
+ *   1. model_parsed_response->>'difficulty' (FIRST)
+ *   2. inference_params->'item_inference_params'->>'target_difficulty'
+ *   3. inference_params->>'difficulty_assigned'
+ *   4. inference_params->>'difficulty'
  * 
  * Returns rows with:
  *  - model: model name from generated_questions.model
@@ -114,6 +122,12 @@ export const LEADERBOARD_MV_1_5_4 = `
  * Ultra-fast pre-aggregated results from mv_leaderboard_stats_2_0_0.
  * This view is pre-filtered to evaluator_version '2.0.0' and pre-aggregated,
  * making queries nearly instant even with millions of rows in the base tables.
+ * 
+ * IMPORTANT: The materialized view must extract difficulty using the same priority order:
+ *   1. model_parsed_response->>'difficulty' (FIRST)
+ *   2. inference_params->'item_inference_params'->>'target_difficulty'
+ *   3. inference_params->>'difficulty_assigned'
+ *   4. inference_params->>'difficulty'
  * 
  * Returns rows with:
  *  - model: model name from generated_questions.model
@@ -396,7 +410,9 @@ export const FETCH_EVALUATIONS = `
     gq.id AS question_id,
     qr.recipe_id,
     gq.model_parsed_response,
+    gq.model_raw_response,
     gq.prompt_text,
+    gq.inference_params,
     aer.evaluator_parsed_response,
     aer.evaluator_score,
     COALESCE(
@@ -472,6 +488,7 @@ export const LATENCY_BY_PERFORMANCE = `
       (gq.inference_params->'item_inference_params'->>'ttft_ms')::numeric AS ttft_ms,
       (gq.inference_params->'item_inference_params'->>'total_generation_time_ms')::numeric AS total_generation_ms,
       COALESCE(
+        gq.model_parsed_response->>'difficulty',
         gq.inference_params->'item_inference_params'->>'target_difficulty',
         gq.inference_params->>'difficulty_assigned',
         gq.inference_params->>'difficulty'
