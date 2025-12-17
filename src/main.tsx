@@ -7,7 +7,7 @@ import { CurriculumProvider } from './contexts/CurriculumContext';
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <CurriculumProvider>
-      <App />
+    <App />
     </CurriculumProvider>
   </React.StrictMode>
 );

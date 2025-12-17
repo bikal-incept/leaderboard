@@ -2,7 +2,7 @@ import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { LEADERBOARD_MV_1_5_4, LEADERBOARD_MV_2_0_0, EXPERIMENT_REPORT, EXPERIMENT_SUMMARY, EXPERIMENT_SCORES, FETCH_EVALUATIONS, QUESTION_RECIPES_BY_FILTERS } from './services/queries';
+import { LEADERBOARD_MV_1_5_4, LEADERBOARD_MV_1_5_4_ATTACHMENT_FILTERED, LEADERBOARD_MV_2_0_0, LEADERBOARD_MV_2_0_0_ATTACHMENT_FILTERED, EXPERIMENT_REPORT, EXPERIMENT_SUMMARY, EXPERIMENT_SCORES, FETCH_EVALUATIONS, QUESTION_RECIPES_BY_FILTERS } from './services/queries';
 import { query } from './services/db';
 import { BLOCKED_STANDARDS_SET, BLOCKED_COMMON_CORE_STANDARDS_SET } from './src/config/blockedStandards';
 
@@ -144,20 +144,36 @@ const apiPlugin = (): Plugin => ({
             const minTotalQuestions = url.searchParams.get('min_total_questions');
             const minTotalQuestionsInt = minTotalQuestions ? parseInt(minTotalQuestions, 10) : null;
             const evaluatorVersion = url.searchParams.get('evaluator_version') || '2.0.0';
+            const viewMode = url.searchParams.get('view_mode') || 'attachment_filtered';
 
             console.log('[API] /api/leaderboard request:', {
               subject,
               gradeLevel,
               questionType,
               minTotalQuestions: minTotalQuestionsInt,
-              evaluatorVersion
+              evaluatorVersion,
+              viewMode
             });
 
-            // Use the appropriate materialized view based on evaluator version
-            // Default to 2.0.0 for new leaderboard
-            const queryToUse = evaluatorVersion === '1.5.4' ? LEADERBOARD_MV_1_5_4 : LEADERBOARD_MV_2_0_0;
+            // Use the appropriate materialized view based on evaluator version and view mode
+            let queryToUse;
+            let queryName;
             
-            console.log('[API] Using query:', evaluatorVersion === '1.5.4' ? 'LEADERBOARD_MV_1_5_4' : 'LEADERBOARD_MV_2_0_0');
+            if (evaluatorVersion === '1.5.4') {
+              // For 1.5.4, always use the base view (no filtering)
+              queryToUse = LEADERBOARD_MV_1_5_4;
+              queryName = 'LEADERBOARD_MV_1_5_4';
+            } else if (viewMode === 'all') {
+              // 2.0.0: Explicitly show ALL recipes including multimedia-required ones
+              queryToUse = LEADERBOARD_MV_2_0_0;
+              queryName = 'LEADERBOARD_MV_2_0_0 (all recipes including multimedia)';
+            } else {
+              // 2.0.0 Default: exclude 48 image-required recipes
+              queryToUse = LEADERBOARD_MV_2_0_0_ATTACHMENT_FILTERED;
+              queryName = 'LEADERBOARD_MV_2_0_0_ATTACHMENT_FILTERED (48 recipes excluded)';
+            }
+            
+            console.log('[API] Using query:', queryName);
             
             // Parameters: subject, grade_level, question_type, min_total_questions
             // Convert empty strings to null for SQL query
@@ -319,11 +335,20 @@ const apiPlugin = (): Plugin => ({
           const subject = url.searchParams.get('subject') || 'ela';
           const includeMultimedia = url.searchParams.get('include_multimedia') === 'true';
 
+          // Recipe IDs that require image attachments (48 recipes)
+          const IMAGE_REQUIRED_RECIPE_IDS = new Set([
+            1117, 840, 904, 910, 934, 955, 1073, 1096, 1110, 1121,
+            841, 1400, 1696, 1786, 1979, 1185, 842, 843, 844, 855,
+            856, 871, 873, 881, 882, 883, 896, 898, 966, 920,
+            929, 939, 940, 988, 989, 990, 991, 1088, 1130, 1172,
+            1337, 1345, 1419, 1432, 1514, 1651, 1873, 1997
+          ]);
+
           console.log('[API] /api/recipes request:', {
             gradeLevel,
             subject,
             includeMultimedia,
-            blockedCommonCoreStandardsCount: BLOCKED_COMMON_CORE_STANDARDS_SET.size
+            imageRequiredRecipesCount: IMAGE_REQUIRED_RECIPE_IDS.size
           });
 
           // Execute QUESTION_RECIPES_BY_FILTERS query
@@ -333,32 +358,21 @@ const apiPlugin = (): Plugin => ({
             subject
           ]);
 
-          // Filter out multimedia standards unless explicitly requested
+          // Filter out image-required recipes unless explicitly requested
           let filteredRows = rows;
           if (!includeMultimedia) {
             filteredRows = rows.filter(row => {
-              const standardId = row.standard_id_l1;
-              if (!standardId) return true; // Keep if no standard
-              
-              // Check if it's a curriculum code
-              if (BLOCKED_STANDARDS_SET.has(standardId)) {
-                return false;
-              }
-              
-              // Check Common Core standards (comma-separated)
-              const standards = standardId.split(',').map((s: string) => s.trim());
-              const isBlocked = standards.some((std: string) => BLOCKED_COMMON_CORE_STANDARDS_SET.has(std));
-              
-              return !isBlocked;
+              const recipeId = row.recipe_id;
+              return !IMAGE_REQUIRED_RECIPE_IDS.has(recipeId);
             });
           }
 
-          console.log(`[API] Query returned ${rows?.length || 0} rows, filtered to ${filteredRows.length} (excluded ${(rows?.length || 0) - filteredRows.length} multimedia standards)`);
+          console.log(`[API] Query returned ${rows?.length || 0} rows, filtered to ${filteredRows.length} (excluded ${(rows?.length || 0) - filteredRows.length} image-required recipes)`);
           
           if ((rows?.length || 0) - filteredRows.length > 0) {
             // Log some examples of what was filtered
             const blocked = rows.filter(r => !filteredRows.includes(r)).slice(0, 3);
-            console.log('[API] Sample blocked recipes:', blocked.map(r => ({ id: r.recipe_id, standard: r.standard_id_l1 })));
+            console.log('[API] Sample image-required recipes excluded:', blocked.map(r => ({ id: r.recipe_id, standard: r.standard_id_l1 })));
           }
 
           res.statusCode = 200;

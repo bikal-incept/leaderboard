@@ -93,7 +93,7 @@ export const LEADERBOARD_BY_SUBJECT = `
  *  $4: min_total_questions (optional) - minimum total questions threshold, pass NULL for no filter
  */
 export const LEADERBOARD_MV_1_5_4 = `
-  SELECT 
+  SELECT
     model,
     experiment_tracker,
     INITCAP(subject) AS subject,
@@ -110,7 +110,64 @@ export const LEADERBOARD_MV_1_5_4 = `
     AND ($3::text IS NULL OR LOWER(question_type) = LOWER($3))
     AND ($4::integer IS NULL OR total_questions >= $4)
     AND experiment_tracker IS NOT NULL
-  ORDER BY 
+  ORDER BY
+    percentage DESC,
+    experiment_tracker,
+    difficulty;
+`;
+
+/**
+ * Leaderboard query using materialized view for evaluator version 1.5.4 (Attachment Filtered)
+ * 
+ * Ultra-fast pre-aggregated results from mv_leaderboard_stats_1_5_4_attachment_filtered.
+ * This view is pre-filtered to evaluator_version '1.5.4', pre-aggregated, AND excludes
+ * recipes with image attachment requirements.
+ * 
+ * This filtered view excludes 48 recipes that require image attachments.
+ * 
+ * IMPORTANT: The materialized view must extract difficulty using the same priority order:
+ *   1. model_parsed_response->>'difficulty' (FIRST)
+ *   2. inference_params->'item_inference_params'->>'target_difficulty'
+ *   3. inference_params->>'difficulty_assigned'
+ *   4. inference_params->>'difficulty'
+ * 
+ * Returns rows with:
+ *  - model: model name from generated_questions.model
+ *  - experiment_tracker: experiment tracker identifier
+ *  - subject: subject from question_recipes
+ *  - grade_level: grade level from question_recipes
+ *  - question_type: type of question (MCQ, etc)
+ *  - difficulty: Easy, Medium, Hard
+ *  - questions_above_threshold: count where score >= 0.85
+ *  - total_questions: total count of questions
+ *  - percentage: success rate (0-100, 1 decimal place)
+ *  - last_updated: timestamp of most recent evaluation
+ * 
+ * Parameters:
+ *  $1: subject (required) - e.g., 'math', 'ela'
+ *  $2: grade_level (optional) - e.g., '3', '4', pass NULL for all grades
+ *  $3: question_type (optional) - e.g., 'mcq', 'fill-in', pass NULL for all types
+ *  $4: min_total_questions (optional) - minimum total questions threshold, pass NULL for no filter
+ */
+export const LEADERBOARD_MV_1_5_4_ATTACHMENT_FILTERED = `
+  SELECT
+    model,
+    experiment_tracker,
+    INITCAP(subject) AS subject,
+    grade_level,
+    LOWER(question_type) AS question_type,
+    INITCAP(difficulty) AS difficulty,
+    questions_above_threshold,
+    total_questions,
+    percentage,
+    last_updated
+  FROM mv_leaderboard_stats_1_5_4_attachment_filtered
+  WHERE LOWER(subject) = LOWER($1)
+    AND ($2::text IS NULL OR grade_level = $2)
+    AND ($3::text IS NULL OR LOWER(question_type) = LOWER($3))
+    AND ($4::integer IS NULL OR total_questions >= $4)
+    AND experiment_tracker IS NOT NULL
+  ORDER BY
     percentage DESC,
     experiment_tracker,
     difficulty;
@@ -160,6 +217,64 @@ export const LEADERBOARD_MV_2_0_0 = `
     percentage,
     last_updated
   FROM mv_leaderboard_stats_2_0_0
+  WHERE LOWER(subject) = LOWER($1)
+    AND ($2::text IS NULL OR grade_level = $2)
+    AND ($3::text IS NULL OR LOWER(question_type) = LOWER($3))
+    AND ($4::integer IS NULL OR total_questions >= $4)
+    AND experiment_tracker IS NOT NULL
+  ORDER BY 
+    percentage DESC,
+    experiment_tracker,
+    difficulty;
+`;
+
+/**
+ * Leaderboard query using materialized view for evaluator version 2.0.0 (Attachment Filtered)
+ * 
+ * Ultra-fast pre-aggregated results from mv_leaderboard_stats_2_0_0_attachment_filtered.
+ * This view is pre-filtered to evaluator_version '2.0.0', pre-aggregated, AND excludes
+ * recipes with blocked standards (multimedia-required standards like charts, diagrams, maps).
+ * 
+ * This filtered view excludes 149 blocked standards across grades 3-8 that require
+ * visual aids (charts, diagrams, maps, timelines) which cannot be generated via text-only.
+ * 
+ * IMPORTANT: The materialized view must extract difficulty using the same priority order:
+ *   1. model_parsed_response->>'difficulty' (FIRST)
+ *   2. inference_params->'item_inference_params'->>'target_difficulty'
+ *   3. inference_params->>'difficulty_assigned'
+ *   4. inference_params->>'difficulty'
+ * 
+ * Returns rows with:
+ *  - model: model name from generated_questions.model
+ *  - experiment_tracker: experiment tracker identifier
+ *  - subject: subject from question_recipes
+ *  - grade_level: grade level from question_recipes
+ *  - question_type: type of question (MCQ, etc)
+ *  - difficulty: Easy, Medium, Hard
+ *  - questions_above_threshold: count where score >= 0.85
+ *  - total_questions: total count of questions
+ *  - percentage: success rate (0-100, 1 decimal place)
+ *  - last_updated: timestamp of most recent evaluation
+ * 
+ * Parameters:
+ *  $1: subject (required) - e.g., 'math', 'ela'
+ *  $2: grade_level (optional) - e.g., '3', '4', pass NULL for all grades
+ *  $3: question_type (optional) - e.g., 'mcq', 'fill-in', pass NULL for all types
+ *  $4: min_total_questions (optional) - minimum total questions threshold, pass NULL for no filter
+ */
+export const LEADERBOARD_MV_2_0_0_ATTACHMENT_FILTERED = `
+  SELECT 
+    model,
+    experiment_tracker,
+    INITCAP(subject) AS subject,
+    grade_level,
+    LOWER(question_type) AS question_type,
+    INITCAP(difficulty) AS difficulty,
+    questions_above_threshold,
+    total_questions,
+    percentage,
+    last_updated
+  FROM mv_leaderboard_stats_2_0_0_attachment_filtered
   WHERE LOWER(subject) = LOWER($1)
     AND ($2::text IS NULL OR grade_level = $2)
     AND ($3::text IS NULL OR LOWER(question_type) = LOWER($3))
@@ -601,7 +716,9 @@ export const QUESTION_RECIPES_BY_FILTERS = `
 export const SQL_QUERIES = {
   LEADERBOARD_BY_SUBJECT,
   LEADERBOARD_MV_1_5_4,
+  LEADERBOARD_MV_1_5_4_ATTACHMENT_FILTERED,
   LEADERBOARD_MV_2_0_0,
+  LEADERBOARD_MV_2_0_0_ATTACHMENT_FILTERED,
   LATENCY_SUMMARY_BY_DIFFICULTY,
   EXPERIMENT_REPORT,
   EXPERIMENT_SUMMARY,

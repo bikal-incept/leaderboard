@@ -304,10 +304,10 @@ const RecipeCenter: React.FC = () => {
                 />
                 <div>
                   <div style={{ fontSize: '14px', fontWeight: '500', color: 'var(--text)' }}>
-                    Include multimedia-required standards
+                    Include image-required recipes
                   </div>
                       <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>
-                        Show standards requiring charts, diagrams, maps, or timelines ({BLOCKED_STANDARDS_SET.size} standards)
+                        Show recipes that require image attachments (48 recipes)
                       </div>
                 </div>
               </label>
@@ -366,7 +366,7 @@ const RecipeCenter: React.FC = () => {
             fontSize: '13px',
             fontWeight: '500',
           }}>
-            {recipes.length - filteredRecipes.length} multimedia standards hidden
+            {recipes.length - filteredRecipes.length} image-required recipes hidden
           </div>
         )}
       </div>
@@ -668,3 +668,4 @@ const DetailField: React.FC<{ label: string; value?: string; multiline?: boolean
 };
 
 export default RecipeCenter;
+

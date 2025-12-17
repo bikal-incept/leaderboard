@@ -1,9 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowUpDown, FileText, Copy, Check, ChevronDown, ChevronUp, Filter, Eye, X, TrendingUp, Download } from 'lucide-react';
+import { ArrowUpDown, FileText, Copy, Check, ChevronDown, ChevronUp, Filter, Eye, X, TrendingUp, Download, AlertCircle } from 'lucide-react';
 import { leaderboardData, type LeaderboardRow } from '../data/leaderboardData';
 import { shouldHighlightExperiment, isExperimentBlocked } from '../config/blockedExperiments';
-import { INCEPTLABS_EXPERIMENTS, FIELD_EXPERIMENTS, isInceptLabsExperiment, isFieldExperiment } from '../config/comparisonExperiments';
+import { getInceptLabsExperiments, getFieldExperiments, isInceptLabsExperiment, isFieldExperiment } from '../config/comparisonExperiments';
 
 const SUBJECTS = ['ela', 'math'] as const;
 type Subject = (typeof SUBJECTS)[number];
@@ -94,16 +94,22 @@ const Benchmarks: React.FC = () => {
   const navigate = useNavigate();
   const [selectedSubject, setSelectedSubject] = useState<Subject>('ela');
 
+  // Evaluator version: '1.5.4' or '2.0.0'
+  const [evaluatorVersion, setEvaluatorVersion] = useState<'1.5.4' | '2.0.0'>('2.0.0');
+
+  // View mode: 'all' for all data, 'attachment_filtered' for blocked standards excluded
+  const [viewMode, setViewMode] = useState<'all' | 'attachment_filtered'>('attachment_filtered');
+
   // Applied filter states (actually used for fetching data)
-  // Default to 60 questions for ELA
+  // Default to 50 questions for ELA
   const [appliedGradeLevel, setAppliedGradeLevel] = useState<string>('');
   const [appliedQuestionType, setAppliedQuestionType] = useState<string>('');
-  const [appliedMinTotalQuestions, setAppliedMinTotalQuestions] = useState<number>(60);
+  const [appliedMinTotalQuestions, setAppliedMinTotalQuestions] = useState<number>(50);
 
   // Pending filter states (user selection before applying)
   const [gradeLevel, setGradeLevel] = useState<string>('');
   const [questionType, setQuestionType] = useState<string>('');
-  const [minTotalQuestions, setMinTotalQuestions] = useState<number>(60);
+  const [minTotalQuestions, setMinTotalQuestions] = useState<number>(50);
 
   const [leaderboardRows, setLeaderboardRows] = useState<LeaderboardRow[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -230,7 +236,8 @@ const Benchmarks: React.FC = () => {
 
         const params = new URLSearchParams({
           subject: apiSubject,
-          evaluator_version: '2.0.0', // Use 2.0.0 evaluator version
+          evaluator_version: evaluatorVersion, // Use selected evaluator version
+          view_mode: viewMode, // Pass the view mode to the API
           ...(appliedGradeLevel && { grade_level: appliedGradeLevel }),
           ...(appliedQuestionType && { question_type: appliedQuestionType }),
           ...(appliedMinTotalQuestions > 0 && { min_total_questions: appliedMinTotalQuestions.toString() }),
@@ -312,7 +319,7 @@ const Benchmarks: React.FC = () => {
     return () => {
       isCancelled = true;
     };
-  }, [selectedSubject, appliedGradeLevel, appliedQuestionType, appliedMinTotalQuestions]);
+  }, [selectedSubject, evaluatorVersion, viewMode, appliedGradeLevel, appliedQuestionType, appliedMinTotalQuestions]);
 
   const subjectData = leaderboardRows
     .filter(row => (row.subject || '').toLowerCase() === selectedSubject)
@@ -337,8 +344,11 @@ const Benchmarks: React.FC = () => {
   }, {} as Record<string, LeaderboardRow[]>);
 
   // Calculate comparison stats for InceptLabs vs Field
-  const inceptLabsStats = calculateComparisonStats(subjectData, INCEPTLABS_EXPERIMENTS);
-  const fieldStats = calculateComparisonStats(subjectData, FIELD_EXPERIMENTS);
+  // Use view-mode-aware experiment configurations
+  const inceptLabsExperiments = getInceptLabsExperiments(viewMode);
+  const fieldExperiments = getFieldExperiments(viewMode);
+  const inceptLabsStats = calculateComparisonStats(subjectData, inceptLabsExperiments);
+  const fieldStats = calculateComparisonStats(subjectData, fieldExperiments);
 
   const getPercentageColor = (percentage: number) => {
     if (percentage >= 90) return 'var(--success)';
@@ -658,8 +668,8 @@ const Benchmarks: React.FC = () => {
             
             // Get experiment names for this difficulty
             const difficultyKey = difficulty.toLowerCase() as 'easy' | 'medium' | 'hard';
-            const inceptExperimentName = INCEPTLABS_EXPERIMENTS[difficultyKey];
-            const fieldExperimentName = FIELD_EXPERIMENTS[difficultyKey];
+            const inceptExperimentName = inceptLabsExperiments[difficultyKey];
+            const fieldExperimentName = fieldExperiments[difficultyKey];
             
             return (
               <div
@@ -1396,15 +1406,113 @@ const Benchmarks: React.FC = () => {
             {error}
           </div>
         )}
-        <h1 style={{
-          fontSize: '28px',
-          fontWeight: '700',
-          color: 'var(--text)',
-          marginBottom: '8px',
-        }}>
-          Leaderboard
-        </h1>
-       
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+          <h1 style={{
+            fontSize: '28px',
+            fontWeight: '700',
+            color: 'var(--text)',
+            margin: 0,
+          }}>
+            Leaderboard
+          </h1>
+          
+          {/* Evaluator Version and View Mode Selectors */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '20px', flexWrap: 'wrap' }}>
+            {/* Evaluator Version Selector */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <label style={{
+                fontSize: '14px',
+                fontWeight: '500',
+                color: 'var(--text-secondary)',
+              }}>
+                Evaluator:
+              </label>
+              <select
+                value={evaluatorVersion}
+                onChange={(e) => setEvaluatorVersion(e.target.value as '1.5.4' | '2.0.0')}
+                style={{
+                  padding: '8px 16px',
+                  fontSize: '14px',
+                  fontWeight: '500',
+                  background: 'var(--surface)',
+                  border: '1px solid var(--border)',
+                  borderRadius: '8px',
+                  color: 'var(--text)',
+                  cursor: 'pointer',
+                  outline: 'none',
+                }}
+                onFocus={(e) => {
+                  e.currentTarget.style.borderColor = 'var(--primary)';
+                }}
+                onBlur={(e) => {
+                  e.currentTarget.style.borderColor = 'var(--border)';
+                }}
+              >
+                <option value="2.0.0">v2.0.0</option>
+                <option value="1.5.4">v1.5.4</option>
+              </select>
+            </div>
+
+            {/* View Mode Selector - Only show for 2.0.0 */}
+            {evaluatorVersion === '2.0.0' && (
+              <>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <label style={{
+                    fontSize: '14px',
+                    fontWeight: '500',
+                    color: 'var(--text-secondary)',
+                  }}>
+                    View Mode:
+                  </label>
+                  <select
+                    value={viewMode}
+                    onChange={(e) => setViewMode(e.target.value as 'all' | 'attachment_filtered')}
+                    style={{
+                      padding: '8px 16px',
+                      fontSize: '14px',
+                      fontWeight: '500',
+                      background: 'var(--surface)',
+                      border: '1px solid var(--border)',
+                      borderRadius: '8px',
+                      color: 'var(--text)',
+                      cursor: 'pointer',
+                      outline: 'none',
+                      minWidth: '200px',
+                    }}
+                    onFocus={(e) => {
+                      e.currentTarget.style.borderColor = 'var(--primary)';
+                    }}
+                    onBlur={(e) => {
+                      e.currentTarget.style.borderColor = 'var(--border)';
+                    }}
+                  >
+                    <option value="attachment_filtered">Attachment Filtered</option>
+                    <option value="all">All Data</option>
+                  </select>
+                </div>
+                
+                {/* Info indicator for filtered mode */}
+                {viewMode === 'attachment_filtered' && (
+                  <div style={{
+                    padding: '6px 12px',
+                    background: 'rgba(251, 191, 36, 0.1)',
+                    border: '1px solid rgba(251, 191, 36, 0.3)',
+                    borderRadius: '6px',
+                    fontSize: '12px',
+                    fontWeight: '500',
+                    color: '#f59e0b',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                  }}>
+                    <AlertCircle size={14} />
+                    48 recipes excluded
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        </div>
 
         {/* Subject Tabs */}
         <div style={{ display: 'flex', gap: '8px', borderBottom: '1px solid var(--border)' }}>
