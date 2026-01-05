@@ -141,7 +141,7 @@ const loadCache = (): CachedExperimentReport[] => {
 };
 
 const getCacheKey = (report: CachedExperimentReport) => {
-  return `${report.experiment_tracker}|${report.subject}|${report.grade_level}|${report.question_type}`;
+  return `${report.experiment_tracker}|${report.subject}|${report.grade_level}|${report.question_type}|${(report as any).evaluator_version || '2.0.0'}`;
 };
 
 const deleteFromCache = (cacheKey: string) => {

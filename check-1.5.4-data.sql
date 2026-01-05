@@ -44,3 +44,11 @@ JOIN public.question_recipes qr ON gq.recipe_id = qr.recipe_id
 WHERE aer.evaluator_version = '1.5.4'
   AND LOWER(qr.subject) = 'ela';
 
+
+
+
+
+
+
+
+

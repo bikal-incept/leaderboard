@@ -286,6 +286,119 @@ export const LEADERBOARD_MV_2_0_0_ATTACHMENT_FILTERED = `
     difficulty;
 `;
 
+/**
+ * Leaderboard query using materialized view for evaluator version 2.1.0
+ * 
+ * Ultra-fast pre-aggregated results from mv_leaderboard_stats_2_1_0.
+ * This view is pre-filtered to evaluator_version '2.1.0' and pre-aggregated,
+ * making queries nearly instant even with millions of rows in the base tables.
+ * 
+ * IMPORTANT: The materialized view must extract difficulty using the same priority order:
+ *   1. model_parsed_response->>'difficulty' (FIRST)
+ *   2. inference_params->'item_inference_params'->>'target_difficulty'
+ *   3. inference_params->>'difficulty_assigned'
+ *   4. inference_params->>'difficulty'
+ * 
+ * Returns rows with:
+ *  - model: model name from generated_questions.model
+ *  - experiment_tracker: experiment tracker identifier
+ *  - subject: subject from question_recipes
+ *  - grade_level: grade level from question_recipes
+ *  - question_type: type of question (MCQ, etc)
+ *  - difficulty: Easy, Medium, Hard
+ *  - questions_above_threshold: count where score >= 0.85
+ *  - total_questions: total count of questions
+ *  - percentage: success rate (0-100, 1 decimal place)
+ *  - last_updated: timestamp of most recent evaluation
+ * 
+ * Parameters:
+ *  $1: subject (required) - e.g., 'math', 'ela'
+ *  $2: grade_level (optional) - e.g., '3', '4', pass NULL for all grades
+ *  $3: question_type (optional) - e.g., 'mcq', 'fill-in', pass NULL for all types
+ *  $4: min_total_questions (optional) - minimum total questions threshold, pass NULL for no filter
+ */
+export const LEADERBOARD_MV_2_1_0 = `
+  SELECT 
+    model,
+    experiment_tracker,
+    INITCAP(subject) AS subject,
+    grade_level,
+    LOWER(question_type) AS question_type,
+    INITCAP(difficulty) AS difficulty,
+    questions_above_threshold,
+    total_questions,
+    percentage,
+    last_updated
+  FROM mv_leaderboard_stats_2_1_0
+  WHERE LOWER(subject) = LOWER($1)
+    AND ($2::text IS NULL OR grade_level = $2)
+    AND ($3::text IS NULL OR LOWER(question_type) = LOWER($3))
+    AND ($4::integer IS NULL OR total_questions >= $4)
+    AND experiment_tracker IS NOT NULL
+  ORDER BY 
+    percentage DESC,
+    experiment_tracker,
+    difficulty;
+`;
+
+/**
+ * Leaderboard query using materialized view for evaluator version 2.1.0 (Attachment Filtered)
+ * 
+ * Ultra-fast pre-aggregated results from mv_leaderboard_stats_2_1_0_attachment_filtered.
+ * This view is pre-filtered to evaluator_version '2.1.0', pre-aggregated, AND excludes
+ * recipes with image attachment requirements (48 recipes with multimedia requirements).
+ * 
+ * This filtered view excludes 48 recipes that require visual aids (images, charts, diagrams, 
+ * maps, timelines) which cannot be generated via text-only.
+ * 
+ * IMPORTANT: The materialized view must extract difficulty using the same priority order:
+ *   1. model_parsed_response->>'difficulty' (FIRST)
+ *   2. inference_params->'item_inference_params'->>'target_difficulty'
+ *   3. inference_params->>'difficulty_assigned'
+ *   4. inference_params->>'difficulty'
+ * 
+ * Returns rows with:
+ *  - model: model name from generated_questions.model
+ *  - experiment_tracker: experiment tracker identifier
+ *  - subject: subject from question_recipes
+ *  - grade_level: grade level from question_recipes
+ *  - question_type: type of question (MCQ, etc)
+ *  - difficulty: Easy, Medium, Hard
+ *  - questions_above_threshold: count where score >= 0.85
+ *  - total_questions: total count of questions
+ *  - percentage: success rate (0-100, 1 decimal place)
+ *  - last_updated: timestamp of most recent evaluation
+ * 
+ * Parameters:
+ *  $1: subject (required) - e.g., 'math', 'ela'
+ *  $2: grade_level (optional) - e.g., '3', '4', pass NULL for all grades
+ *  $3: question_type (optional) - e.g., 'mcq', 'fill-in', pass NULL for all types
+ *  $4: min_total_questions (optional) - minimum total questions threshold, pass NULL for no filter
+ */
+export const LEADERBOARD_MV_2_1_0_ATTACHMENT_FILTERED = `
+  SELECT 
+    model,
+    experiment_tracker,
+    INITCAP(subject) AS subject,
+    grade_level,
+    LOWER(question_type) AS question_type,
+    INITCAP(difficulty) AS difficulty,
+    questions_above_threshold,
+    total_questions,
+    percentage,
+    last_updated
+  FROM mv_leaderboard_stats_2_1_0_attachment_filtered
+  WHERE LOWER(subject) = LOWER($1)
+    AND ($2::text IS NULL OR grade_level = $2)
+    AND ($3::text IS NULL OR LOWER(question_type) = LOWER($3))
+    AND ($4::integer IS NULL OR total_questions >= $4)
+    AND experiment_tracker IS NOT NULL
+  ORDER BY 
+    percentage DESC,
+    experiment_tracker,
+    difficulty;
+`;
+
 // Example latency summary query. Again, table/column names are placeholders.
 export const LATENCY_SUMMARY_BY_DIFFICULTY = `
   SELECT
@@ -375,10 +488,10 @@ export const EXPERIMENT_REPORT = `
   JOIN public.question_recipes AS qr
     ON gq.recipe_id = qr.recipe_id
   WHERE gq.experiment_tracker = $1
-    AND aer.evaluator_version = '2.0.0'
     AND ($2::text IS NULL OR LOWER(qr.subject) = LOWER($2))
     AND ($3::text IS NULL OR qr.grade_level = $3)
     AND ($4::text IS NULL OR LOWER(gq.question_type) = LOWER($4))
+    AND aer.evaluator_version = $5
   GROUP BY
     gq.experiment_tracker,
     gq.model,
@@ -425,10 +538,10 @@ export const EXPERIMENT_SUMMARY = `
     JOIN public.question_recipes AS qr
       ON gq.recipe_id = qr.recipe_id
     WHERE gq.experiment_tracker = $1
-      AND aer.evaluator_version = '2.0.0'
       AND ($2::text IS NULL OR LOWER(qr.subject) = LOWER($2))
       AND ($3::text IS NULL OR qr.grade_level = $3)
       AND ($4::text IS NULL OR LOWER(gq.question_type) = LOWER($4))
+      AND aer.evaluator_version = $5
   )
   SELECT
     experiment_tracker,
@@ -498,10 +611,10 @@ export const EXPERIMENT_SCORES = `
   JOIN public.question_recipes AS qr
     ON gq.recipe_id = qr.recipe_id
   WHERE gq.experiment_tracker = $1
-    AND aer.evaluator_version = '2.0.0'
     AND ($2::text IS NULL OR LOWER(qr.subject) = LOWER($2))
     AND ($3::text IS NULL OR qr.grade_level = $3)
     AND ($4::text IS NULL OR LOWER(gq.question_type) = LOWER($4))
+    AND aer.evaluator_version = $5
   ORDER BY aer.evaluator_score;
 `;
 

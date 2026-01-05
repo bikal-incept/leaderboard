@@ -48,7 +48,7 @@ const RecipeCenter: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   
   const [gradeLevel, setGradeLevel] = useState<string>('3');
-  const [subject, setSubject] = useState<string>('ela');
+  const [subject, setSubject] = useState<string>('language');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [showFilters, setShowFilters] = useState<boolean>(false);
   const [expandedRecipe, setExpandedRecipe] = useState<number | null>(null);
@@ -278,6 +278,7 @@ const RecipeCenter: React.FC = () => {
                     cursor: 'pointer',
                   }}
                 >
+                  <option value="language">Language</option>
                   <option value="ela">ELA</option>
                   <option value="math">Math</option>
                 </select>
@@ -668,4 +669,12 @@ const DetailField: React.FC<{ label: string; value?: string; multiline?: boolean
 };
 
 export default RecipeCenter;
+
+
+
+
+
+
+
+
 

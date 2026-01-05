@@ -2,7 +2,7 @@ import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { LEADERBOARD_MV_1_5_4, LEADERBOARD_MV_1_5_4_ATTACHMENT_FILTERED, LEADERBOARD_MV_2_0_0, LEADERBOARD_MV_2_0_0_ATTACHMENT_FILTERED, EXPERIMENT_REPORT, EXPERIMENT_SUMMARY, EXPERIMENT_SCORES, FETCH_EVALUATIONS, QUESTION_RECIPES_BY_FILTERS } from './services/queries';
+import { LEADERBOARD_MV_1_5_4, LEADERBOARD_MV_1_5_4_ATTACHMENT_FILTERED, LEADERBOARD_MV_2_0_0, LEADERBOARD_MV_2_0_0_ATTACHMENT_FILTERED, LEADERBOARD_MV_2_1_0, LEADERBOARD_MV_2_1_0_ATTACHMENT_FILTERED, EXPERIMENT_REPORT, EXPERIMENT_SUMMARY, EXPERIMENT_SCORES, FETCH_EVALUATIONS, QUESTION_RECIPES_BY_FILTERS } from './services/queries';
 import { query } from './services/db';
 import { BLOCKED_STANDARDS_SET, BLOCKED_COMMON_CORE_STANDARDS_SET } from './src/config/blockedStandards';
 
@@ -163,6 +163,15 @@ const apiPlugin = (): Plugin => ({
               // For 1.5.4, always use the base view (no filtering)
               queryToUse = LEADERBOARD_MV_1_5_4;
               queryName = 'LEADERBOARD_MV_1_5_4';
+            } else if (evaluatorVersion === '2.1.0') {
+              // For 2.1.0, use view mode to determine filtering
+              if (viewMode === 'all') {
+                queryToUse = LEADERBOARD_MV_2_1_0;
+                queryName = 'LEADERBOARD_MV_2_1_0 (all recipes including multimedia)';
+              } else {
+                queryToUse = LEADERBOARD_MV_2_1_0_ATTACHMENT_FILTERED;
+                queryName = 'LEADERBOARD_MV_2_1_0_ATTACHMENT_FILTERED (48 recipes excluded)';
+              }
             } else if (viewMode === 'all') {
               // 2.0.0: Explicitly show ALL recipes including multimedia-required ones
               queryToUse = LEADERBOARD_MV_2_0_0;
@@ -217,15 +226,27 @@ const apiPlugin = (): Plugin => ({
           const subject = url.searchParams.get('subject') || null;
           const gradeLevel = url.searchParams.get('grade_level') || null;
           const questionType = url.searchParams.get('question_type') || null;
+          const evaluatorVersion = url.searchParams.get('evaluator_version') || '2.0.0';
+
+          console.log('[API /experiment-report] Query params:', {
+            experimentTracker,
+            subject,
+            gradeLevel,
+            questionType,
+            evaluatorVersion
+          });
 
           // Execute EXPERIMENT_REPORT query
-          // Parameters: experiment_tracker, subject, grade_level, question_type
+          // Parameters: experiment_tracker, subject, grade_level, question_type, evaluator_version
           const { rows } = await query(EXPERIMENT_REPORT, [
             experimentTracker,
             subject,
             gradeLevel,
-            questionType
+            questionType,
+            evaluatorVersion
           ]);
+
+          console.log('[API /experiment-report] Query returned', rows.length, 'rows');
 
           res.statusCode = 200;
           res.setHeader('Content-Type', 'application/json');
@@ -247,14 +268,16 @@ const apiPlugin = (): Plugin => ({
           const subject = url.searchParams.get('subject') || null;
           const gradeLevel = url.searchParams.get('grade_level') || null;
           const questionType = url.searchParams.get('question_type') || null;
+          const evaluatorVersion = url.searchParams.get('evaluator_version') || '2.0.0';
 
           // Execute EXPERIMENT_SUMMARY query
-          // Parameters: experiment_tracker, subject, grade_level, question_type
+          // Parameters: experiment_tracker, subject, grade_level, question_type, evaluator_version
           const { rows } = await query(EXPERIMENT_SUMMARY, [
             experimentTracker,
             subject,
             gradeLevel,
-            questionType
+            questionType,
+            evaluatorVersion
           ]);
 
           res.statusCode = 200;
@@ -277,14 +300,16 @@ const apiPlugin = (): Plugin => ({
           const subject = url.searchParams.get('subject') || null;
           const gradeLevel = url.searchParams.get('grade_level') || null;
           const questionType = url.searchParams.get('question_type') || null;
+          const evaluatorVersion = url.searchParams.get('evaluator_version') || '2.0.0';
 
           // Execute EXPERIMENT_SCORES query
-          // Parameters: experiment_tracker, subject, grade_level, question_type
+          // Parameters: experiment_tracker, subject, grade_level, question_type, evaluator_version
           const { rows } = await query(EXPERIMENT_SCORES, [
             experimentTracker,
             subject,
             gradeLevel,
-            questionType
+            questionType,
+            evaluatorVersion
           ]);
 
           // Return full score objects with metadata

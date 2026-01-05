@@ -1150,7 +1150,7 @@ const LookAtData: React.FC = () => {
   const [summaryDifficulty, setSummaryDifficulty] = useState<string | null>(null);
 
   // Get current filters from URL/context - simplified for standalone page
-  const [selectedSubject, setSelectedSubject] = useState<string>('math');
+  const [selectedSubject, setSelectedSubject] = useState<string>('language');
   const [gradeLevel, setGradeLevel] = useState<string>('');
   const [questionType, setQuestionType] = useState<string>('');
 
@@ -1433,6 +1433,7 @@ const LookAtData: React.FC = () => {
               e.currentTarget.style.borderColor = 'var(--border)';
             }}
           >
+            <option value="language">Language</option>
             <option value="math">Math</option>
             <option value="ela">ELA</option>
           </select>

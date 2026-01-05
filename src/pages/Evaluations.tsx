@@ -46,8 +46,8 @@ type CachedExperimentReport = {
 const CACHE_KEY = 'experiment_reports_cache';
 const MAX_CACHE_ITEMS = 4;
 
-const getCacheKey = (filters: { experiment_tracker: string; subject: string; grade_level: string; question_type: string }) => {
-  return `${filters.experiment_tracker}|${filters.subject}|${filters.grade_level}|${filters.question_type}`;
+const getCacheKey = (filters: { experiment_tracker: string; subject: string; grade_level: string; question_type: string; evaluator_version?: string }) => {
+  return `${filters.experiment_tracker}|${filters.subject}|${filters.grade_level}|${filters.question_type}|${filters.evaluator_version || '2.0.0'}`;
 };
 
 const loadCache = (): CachedExperimentReport[] => {
@@ -89,7 +89,7 @@ const loadCache = (): CachedExperimentReport[] => {
 };
 
 const saveToCache = (
-  filters: { experiment_tracker: string; subject: string; grade_level: string; question_type: string },
+  filters: { experiment_tracker: string; subject: string; grade_level: string; question_type: string; evaluator_version: string },
   reportData: ExperimentReportRow[],
   summaryData: ExperimentSummary | null,
   scoresData: ExperimentScoreRow[]
@@ -240,6 +240,7 @@ const Evaluations: React.FC = () => {
     subject: searchParams.get('subject') || '',
     gradeLevel: searchParams.get('grade_level') || '',
     questionType: searchParams.get('question_type') || '',
+    evaluatorVersion: searchParams.get('evaluator_version') || '2.0.0',
   });
   
   // API data states
@@ -280,24 +281,26 @@ const Evaluations: React.FC = () => {
   useEffect(() => {
     const fetchExperiments = async () => {
       try {
-        // Fetch from both ELA and Math to get all experiments
-        const [elaResponse, mathResponse] = await Promise.all([
+        // Fetch from Language, ELA, and Math to get all experiments
+        const [languageResponse, elaResponse, mathResponse] = await Promise.all([
+          fetch(`/api/leaderboard?subject=language&evaluator_version=2.0.0`),
           fetch(`/api/leaderboard?subject=ela&evaluator_version=2.0.0`),
           fetch(`/api/leaderboard?subject=math&evaluator_version=2.0.0`),
         ]);
 
-        if (!elaResponse.ok || !mathResponse.ok) {
+        if (!languageResponse.ok || !elaResponse.ok || !mathResponse.ok) {
           console.warn('[Evaluations] Failed to fetch experiment list, using mock data');
           return;
         }
 
-        const [elaData, mathData] = await Promise.all([
+        const [languageData, elaData, mathData] = await Promise.all([
+          languageResponse.json(),
           elaResponse.json(),
           mathResponse.json(),
         ]);
 
         // Combine and get unique experiment_trackers
-        const allData = [...(elaData || []), ...(mathData || [])];
+        const allData = [...(languageData || []), ...(elaData || []), ...(mathData || [])];
         const uniqueExperiments = Array.from(
           new Map(
             allData
@@ -371,6 +374,12 @@ const Evaluations: React.FC = () => {
   useEffect(() => {
     let isCancelled = false;
 
+    console.log('[Experiment Report useEffect] Triggered with:', {
+      selectedExperiment,
+      appliedFilters,
+      loadingFromCache: loadingFromCacheRef.current
+    });
+
     async function loadExperimentData() {
       // Skip if loading from cache (use ref for synchronous check)
       if (loadingFromCacheRef.current) {
@@ -380,11 +389,14 @@ const Evaluations: React.FC = () => {
 
       // Only fetch if an experiment is selected
       if (!selectedExperiment) {
+        console.log('[Experiment Report] No experiment selected, clearing data');
         setExperimentReport([]);
         setExperimentSummary(null);
         setExperimentScores([]);
         return;
       }
+
+      console.log('[Experiment Report] Starting to load data for:', selectedExperiment);
 
       setIsLoading(true);
       setError(null);
@@ -392,10 +404,14 @@ const Evaluations: React.FC = () => {
       try {
         const params = new URLSearchParams({
           experiment_tracker: selectedExperiment,
+          evaluator_version: appliedFilters.evaluatorVersion,
           ...(appliedFilters.subject && { subject: appliedFilters.subject }),
           ...(appliedFilters.gradeLevel && { grade_level: appliedFilters.gradeLevel }),
           ...(appliedFilters.questionType && { question_type: appliedFilters.questionType }),
         });
+
+        console.log('[Experiment Report] Fetching data with params:', params.toString());
+        console.log('[Experiment Report] Full URL:', `/api/experiment-report?${params.toString()}`);
 
         // Fetch report, summary, and scores in parallel
         const [reportResponse, summaryResponse, scoresResponse] = await Promise.all([
@@ -404,7 +420,18 @@ const Evaluations: React.FC = () => {
           fetch(`/api/experiment-scores?${params.toString()}`),
         ]);
 
+        console.log('[Experiment Report] Response status:', {
+          report: reportResponse.ok,
+          summary: summaryResponse.ok,
+          scores: scoresResponse.ok
+        });
+
         if (!reportResponse.ok || !summaryResponse.ok || !scoresResponse.ok) {
+          console.error('[Experiment Report] One or more responses failed:', {
+            reportStatus: reportResponse.status,
+            summaryStatus: summaryResponse.status,
+            scoresStatus: scoresResponse.status
+          });
           throw new Error('Failed to fetch experiment data');
         }
 
@@ -427,7 +454,12 @@ const Evaluations: React.FC = () => {
 
         if (isCancelled) return;
 
-        console.log('[Experiment Report] Loaded data:', { reportData, summaryData, scoresCount: scoresData.length });
+        console.log('[Experiment Report] Loaded data:', { 
+          reportDataLength: reportData?.length, 
+          reportData: reportData,
+          summaryData, 
+          scoresCount: scoresData?.length 
+        });
         setExperimentReport(reportData || []);
         setExperimentSummary(summaryData || null);
         setExperimentScores(scoresData || []);
@@ -440,6 +472,7 @@ const Evaluations: React.FC = () => {
               subject: appliedFilters.subject || '',
               grade_level: appliedFilters.gradeLevel || '',
               question_type: appliedFilters.questionType || '',
+              evaluator_version: appliedFilters.evaluatorVersion,
             },
             reportData || [],
             summaryData || null,
@@ -480,6 +513,7 @@ const Evaluations: React.FC = () => {
     const subject = searchParams.get('subject');
     const gradeLevel = searchParams.get('grade_level');
     const questionType = searchParams.get('question_type');
+    const evaluatorVersion = searchParams.get('evaluator_version');
     
     if (model && model !== selectedExperiment) {
       setSelectedExperiment(model);
@@ -489,6 +523,7 @@ const Evaluations: React.FC = () => {
       subject: subject || '',
       gradeLevel: gradeLevel || '',
       questionType: questionType || '',
+      evaluatorVersion: evaluatorVersion || '2.0.0',
     });
   }, [searchParams]); // loadingFromCacheRef doesn't need to be in deps
 
@@ -546,6 +581,7 @@ const Evaluations: React.FC = () => {
       subject: cached.subject || '',
       gradeLevel: cached.grade_level || '',
       questionType: cached.question_type || '',
+      evaluatorVersion: (cached as any).evaluator_version || '2.0.0',
     });
     
     // Update URL params

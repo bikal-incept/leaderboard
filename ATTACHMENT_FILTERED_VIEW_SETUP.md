@@ -273,3 +273,11 @@ If you need to update the list of blocked standards:
 - Add more granular filtering options (e.g., by standard category)
 - Create separate views for different types of multimedia requirements
 
+
+
+
+
+
+
+
+

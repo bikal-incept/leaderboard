@@ -95,3 +95,11 @@ COMMENT ON COLUMN mv_leaderboard_stats_2_0_0_attachment_filtered.last_updated IS
 
 -- Grant permissions (adjust as needed for your setup)
 -- GRANT SELECT ON mv_leaderboard_stats_2_0_0_attachment_filtered TO your_app_user;
+
+
+
+
+
+
+
+

@@ -1,11 +1,11 @@
 import React, { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowUpDown, FileText, Copy, Check, ChevronDown, ChevronUp, Filter, Eye, X, TrendingUp, Download, AlertCircle } from 'lucide-react';
 import { leaderboardData, type LeaderboardRow } from '../data/leaderboardData';
 import { shouldHighlightExperiment, isExperimentBlocked } from '../config/blockedExperiments';
-import { getInceptLabsExperiments, getFieldExperiments, isInceptLabsExperiment, isFieldExperiment } from '../config/comparisonExperiments';
+import { getInceptLabsExperiments, getFieldExperiments, getOverallComparisonExperimentTuples } from '../config/comparisonExperiments';
 
-const SUBJECTS = ['ela', 'math'] as const;
+const SUBJECTS = ['language', 'reading', '(r+l)-ela', 'ela', 'math'] as const;
 type Subject = (typeof SUBJECTS)[number];
 
 type SortConfig = {
@@ -44,7 +44,9 @@ function calculatePercentile(values: number[], percentile: number): number {
 }
 
 // Helper function to calculate comparison stats for a group of experiments
-function calculateComparisonStats(rows: LeaderboardRow[], experimentConfig: typeof INCEPTLABS_EXPERIMENTS): ComparisonStats {
+type ExperimentConfig = { easy: string; medium: string; hard: string };
+
+function calculateComparisonStats(rows: LeaderboardRow[], experimentConfig: ExperimentConfig): ComparisonStats {
   const easyRow = rows.find(r => r.model === experimentConfig.easy && r.difficulty === 'Easy');
   const mediumRow = rows.find(r => r.model === experimentConfig.medium && r.difficulty === 'Medium');
   const hardRow = rows.find(r => r.model === experimentConfig.hard && r.difficulty === 'Hard');
@@ -92,30 +94,66 @@ function calculateComparisonStats(rows: LeaderboardRow[], experimentConfig: type
 
 const Benchmarks: React.FC = () => {
   const navigate = useNavigate();
-  const [selectedSubject, setSelectedSubject] = useState<Subject>('ela');
+  const [searchParams, setSearchParams] = useSearchParams();
 
-  // Evaluator version: '1.5.4' or '2.0.0'
-  const [evaluatorVersion, setEvaluatorVersion] = useState<'1.5.4' | '2.0.0'>('2.0.0');
+  // Helper to get subject-specific defaults
+  const getDefaultMinQuestions = (subject: Subject): number => {
+    if (subject === 'math') return 120;
+    if (subject === 'ela') return 60;
+    if (subject === 'reading') return 50;
+    if (subject === '(r+l)-ela') return 50;
+    return 50; // language
+  };
+
+  // Initialize state from URL params (or use defaults)
+  const [selectedSubject, setSelectedSubject] = useState<Subject>(() => {
+    const urlSubject = searchParams.get('subject') as Subject | null;
+    return (urlSubject && SUBJECTS.includes(urlSubject)) ? urlSubject : 'language';
+  });
+
+  // Evaluator version: '1.5.4', '2.0.0', or '2.1.0'
+  const [evaluatorVersion, setEvaluatorVersion] = useState<'1.5.4' | '2.0.0' | '2.1.0'>(() => {
+    const urlVersion = searchParams.get('evaluator_version');
+    if (urlVersion === '1.5.4' || urlVersion === '2.0.0' || urlVersion === '2.1.0') {
+      return urlVersion;
+    }
+    // Default to 2.1.0 for language, 2.0.0 for others
+    const urlSubject = searchParams.get('subject') as Subject | null;
+    const subject = (urlSubject && SUBJECTS.includes(urlSubject)) ? urlSubject : 'language';
+    return subject === 'language' ? '2.1.0' : '2.0.0';
+  });
 
   // View mode: 'all' for all data, 'attachment_filtered' for blocked standards excluded
-  const [viewMode, setViewMode] = useState<'all' | 'attachment_filtered'>('attachment_filtered');
+  // For version 2.1.0, always use 'all' (no attachment filtering available)
+  const [viewMode, setViewMode] = useState<'all' | 'attachment_filtered'>(() => {
+    // If evaluator is 2.1.0, force 'all' mode
+    const urlVersion = searchParams.get('evaluator_version');
+    if (urlVersion === '2.1.0') {
+      return 'all';
+    }
+    const urlViewMode = searchParams.get('view_mode');
+    return (urlViewMode === 'all' || urlViewMode === 'attachment_filtered') ? urlViewMode : 'attachment_filtered';
+  });
 
-  // Applied filter states (actually used for fetching data)
-  // Default to 50 questions for ELA
-  const [appliedGradeLevel, setAppliedGradeLevel] = useState<string>('');
-  const [appliedQuestionType, setAppliedQuestionType] = useState<string>('');
-  const [appliedMinTotalQuestions, setAppliedMinTotalQuestions] = useState<number>(50);
-
-  // Pending filter states (user selection before applying)
-  const [gradeLevel, setGradeLevel] = useState<string>('');
-  const [questionType, setQuestionType] = useState<string>('');
-  const [minTotalQuestions, setMinTotalQuestions] = useState<number>(50);
+  // Filter states - single source of truth (no pending/applied split)
+  const [gradeLevel, setGradeLevel] = useState<string>(() => {
+    return searchParams.get('grade_level') || '';
+  });
+  
+  const [questionType, setQuestionType] = useState<string>(() => {
+    return searchParams.get('question_type') || 'mcq';
+  });
+  
+  const [minTotalQuestions, setMinTotalQuestions] = useState<number>(() => {
+    const urlMin = searchParams.get('min_total_questions');
+    if (urlMin) return parseInt(urlMin, 10);
+    return getDefaultMinQuestions(selectedSubject);
+  });
 
   const [leaderboardRows, setLeaderboardRows] = useState<LeaderboardRow[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copiedExperiment, setCopiedExperiment] = useState<string | null>(null);
-  const [showFilters, setShowFilters] = useState(false);
   const [addedToCache, setAddedToCache] = useState<string | null>(null);
   const [isCaching, setIsCaching] = useState<string | null>(null);
   
@@ -128,8 +166,8 @@ const Benchmarks: React.FC = () => {
   const CACHE_KEY = 'experiment_reports_cache';
   const MAX_CACHE_ITEMS = 4;
 
-  const getCacheKey = (filters: { experiment_tracker: string; subject: string; grade_level: string; question_type: string }) => {
-    return `${filters.experiment_tracker}|${filters.subject}|${filters.grade_level}|${filters.question_type}`;
+  const getCacheKey = (filters: { experiment_tracker: string; subject: string; grade_level: string; question_type: string; evaluator_version: string }) => {
+    return `${filters.experiment_tracker}|${filters.subject}|${filters.grade_level}|${filters.question_type}|${filters.evaluator_version}`;
   };
 
   const loadCache = () => {
@@ -147,7 +185,7 @@ const Benchmarks: React.FC = () => {
   };
 
   const saveToCache = (
-    filters: { experiment_tracker: string; subject: string; grade_level: string; question_type: string },
+    filters: { experiment_tracker: string; subject: string; grade_level: string; question_type: string; evaluator_version: string },
     reportData: any[],
     summaryData: any,
     scoresData: any[]
@@ -208,17 +246,31 @@ const Benchmarks: React.FC = () => {
     }
   };
 
-  // Check if there are unapplied filter changes
-  const hasUnappliedChanges = 
-    gradeLevel !== appliedGradeLevel ||
-    questionType !== appliedQuestionType ||
-    minTotalQuestions !== appliedMinTotalQuestions;
+  // Force viewMode to 'all' when evaluator version is 2.1.0
+  useEffect(() => {
+    if (evaluatorVersion === '2.1.0' && viewMode !== 'all') {
+      setViewMode('all');
+    }
+  }, [evaluatorVersion, viewMode]);
 
-  const applyFilters = () => {
-    setAppliedGradeLevel(gradeLevel);
-    setAppliedQuestionType(questionType);
-    setAppliedMinTotalQuestions(minTotalQuestions);
-  };
+  // Sync filter state to URL params
+  useEffect(() => {
+    const params = new URLSearchParams();
+    
+    // Always include subject
+    params.set('subject', selectedSubject);
+    
+    // Include optional filters only if set
+    if (gradeLevel) params.set('grade_level', gradeLevel);
+    if (questionType) params.set('question_type', questionType);
+    if (minTotalQuestions > 0) params.set('min_total_questions', minTotalQuestions.toString());
+    
+    // Include evaluator version and view mode
+    params.set('evaluator_version', evaluatorVersion);
+    params.set('view_mode', viewMode);
+    
+    setSearchParams(params, { replace: true });
+  }, [selectedSubject, gradeLevel, questionType, minTotalQuestions, evaluatorVersion, viewMode, setSearchParams]);
 
   useEffect(() => {
     let isCancelled = false;
@@ -232,75 +284,153 @@ const Benchmarks: React.FC = () => {
         // query and return rows matching the LeaderboardRow shape (or with
         // snake_case column names from the SQL, which we normalize below).
         // Subject is stored lowercase to match backend expectations (DB stores subject in lowercase).
-        const apiSubject = selectedSubject;
+        
+        // Special handling for (R+L)-ELA: fetch both reading and language, then combine
+        if (selectedSubject === '(r+l)-ela') {
+          console.log('[Leaderboard] Fetching combined Reading + Language data for (R+L)-ELA...');
+          
+          const params = new URLSearchParams({
+            evaluator_version: evaluatorVersion,
+            view_mode: viewMode,
+            ...(gradeLevel && { grade_level: gradeLevel }),
+            ...(questionType && { question_type: questionType }),
+            ...(minTotalQuestions > 0 && { min_total_questions: minTotalQuestions.toString() }),
+          });
 
-        const params = new URLSearchParams({
-          subject: apiSubject,
-          evaluator_version: evaluatorVersion, // Use selected evaluator version
-          view_mode: viewMode, // Pass the view mode to the API
-          ...(appliedGradeLevel && { grade_level: appliedGradeLevel }),
-          ...(appliedQuestionType && { question_type: appliedQuestionType }),
-          ...(appliedMinTotalQuestions > 0 && { min_total_questions: appliedMinTotalQuestions.toString() }),
-        });
+          // Fetch both reading and language in parallel
+          const [readingResponse, languageResponse] = await Promise.all([
+            fetch(`/api/leaderboard?subject=reading&${params.toString()}`),
+            fetch(`/api/leaderboard?subject=language&${params.toString()}`),
+          ]);
 
-        const response = await fetch(`/api/leaderboard?${params.toString()}`);
-
-        if (!response.ok) {
-          throw new Error(`Request failed with status ${response.status}`);
-        }
-
-        const contentType = response.headers.get('content-type') || '';
-
-        // If we didn't actually hit a JSON API (e.g. dev server returned HTML),
-        // avoid JSON parse errors and fall back to the bundled mock data so the
-        // UI still works.
-        if (!contentType.includes('application/json')) {
-          if (!isCancelled) {
-            console.warn(
-              'Expected JSON from /api/leaderboard but received',
-              contentType,
-              '- falling back to static leaderboard data.',
-            );
-            setLeaderboardRows(leaderboardData);
+          if (!readingResponse.ok || !languageResponse.ok) {
+            throw new Error('Failed to fetch reading or language data');
           }
-          return;
+
+          const [readingData, languageData] = await Promise.all([
+            readingResponse.json(),
+            languageResponse.json(),
+          ]);
+
+          if (isCancelled) return;
+
+          // Find experiments that exist in BOTH reading and language (intersection)
+          const readingExperiments = new Set(
+            (readingData ?? []).map((row: any) => row.experiment_tracker ?? row.model)
+          );
+          const languageExperiments = new Set(
+            (languageData ?? []).map((row: any) => row.experiment_tracker ?? row.model)
+          );
+          
+          // Intersection: experiments in both reading AND language
+          const commonExperiments = new Set(
+            Array.from(readingExperiments).filter(exp => languageExperiments.has(exp))
+          );
+          
+          console.log(`[Leaderboard] Reading experiments: ${readingExperiments.size}, Language experiments: ${languageExperiments.size}, Common: ${commonExperiments.size}`);
+
+          // Combine both datasets and filter to only common experiments
+          const combinedRaw = [...(readingData ?? []), ...(languageData ?? [])].filter((row: any) => {
+            const expTracker = row.experiment_tracker ?? row.model;
+            return commonExperiments.has(expTracker);
+          });
+          
+          console.log(`[Leaderboard] Filtered to ${combinedRaw.length} rows from common experiments`);
+
+          const normalized: LeaderboardRow[] = combinedRaw.map((row: any) => ({
+            model: row.experiment_tracker ?? row.model,
+            actualModel: row.model,
+            subject: '(R+L)-ELA', // Override subject for display
+            questionType: row.questionType ?? row.question_type,
+            difficulty: row.difficulty,
+            questionsAboveThreshold:
+              typeof row.questionsAboveThreshold === 'number'
+                ? row.questionsAboveThreshold
+                : Number(row.questions_above_threshold ?? 0),
+            totalQuestions:
+              typeof row.totalQuestions === 'number'
+                ? row.totalQuestions
+                : Number(row.total_questions ?? 0),
+            percentage:
+              typeof row.percentage === 'number'
+                ? row.percentage
+                : Number(row.percentage ?? 0),
+          }));
+
+          console.log(`[Leaderboard] Loaded ${normalized.length} combined rows for (R+L)-ELA`, normalized);
+          setLeaderboardRows(normalized);
+        } else {
+          // Normal single-subject fetch
+          const apiSubject = selectedSubject;
+
+          const params = new URLSearchParams({
+            subject: apiSubject,
+            evaluator_version: evaluatorVersion,
+            view_mode: viewMode,
+            ...(gradeLevel && { grade_level: gradeLevel }),
+            ...(questionType && { question_type: questionType }),
+            ...(minTotalQuestions > 0 && { min_total_questions: minTotalQuestions.toString() }),
+          });
+
+          const response = await fetch(`/api/leaderboard?${params.toString()}`);
+
+          if (!response.ok) {
+            throw new Error(`Request failed with status ${response.status}`);
+          }
+
+          const contentType = response.headers.get('content-type') || '';
+
+          // If we didn't actually hit a JSON API (e.g. dev server returned HTML),
+          // avoid JSON parse errors and fall back to the bundled mock data so the
+          // UI still works.
+          if (!contentType.includes('application/json')) {
+            if (!isCancelled) {
+              console.warn(
+                'Expected JSON from /api/leaderboard but received',
+                contentType,
+                '- falling back to static leaderboard data.',
+              );
+              setLeaderboardRows(leaderboardData);
+            }
+            return;
+          }
+
+          const rawData = await response.json();
+          console.log(`[Leaderboard] Raw API response for "${apiSubject}":`, rawData);
+
+          if (isCancelled) return;
+
+          // Check if the response contains an error
+          if (rawData && typeof rawData === 'object' && 'error' in rawData) {
+            throw new Error(rawData.message || rawData.error || 'Unknown error from API');
+          }
+
+          const normalized: LeaderboardRow[] = (rawData ?? []).map((row: any) => ({
+            // Use experiment_tracker as the display name (what was previously called "model" in the UI)
+            model: row.experiment_tracker ?? row.model,
+            // Store the actual model name if available
+            actualModel: row.model,
+            subject: row.subject,
+            // Handle both `question_type` from SQL and `questionType` if already mapped.
+            questionType: row.questionType ?? row.question_type,
+            difficulty: row.difficulty,
+            questionsAboveThreshold:
+              typeof row.questionsAboveThreshold === 'number'
+                ? row.questionsAboveThreshold
+                : Number(row.questions_above_threshold ?? 0),
+            totalQuestions:
+              typeof row.totalQuestions === 'number'
+                ? row.totalQuestions
+                : Number(row.total_questions ?? 0),
+            percentage:
+              typeof row.percentage === 'number'
+                ? row.percentage
+                : Number(row.percentage ?? 0),
+          }));
+
+          console.log(`[Leaderboard] Loaded ${normalized.length} rows for subject "${selectedSubject}"`, normalized);
+          setLeaderboardRows(normalized);
         }
-
-        const rawData = await response.json();
-        console.log(`[Leaderboard] Raw API response for "${apiSubject}":`, rawData);
-
-        if (isCancelled) return;
-
-        // Check if the response contains an error
-        if (rawData && typeof rawData === 'object' && 'error' in rawData) {
-          throw new Error(rawData.message || rawData.error || 'Unknown error from API');
-        }
-
-        const normalized: LeaderboardRow[] = (rawData ?? []).map((row: any) => ({
-          // Use experiment_tracker as the display name (what was previously called "model" in the UI)
-          model: row.experiment_tracker ?? row.model,
-          // Store the actual model name if available
-          actualModel: row.model,
-          subject: row.subject,
-          // Handle both `question_type` from SQL and `questionType` if already mapped.
-          questionType: row.questionType ?? row.question_type,
-          difficulty: row.difficulty,
-          questionsAboveThreshold:
-            typeof row.questionsAboveThreshold === 'number'
-              ? row.questionsAboveThreshold
-              : Number(row.questions_above_threshold ?? 0),
-          totalQuestions:
-            typeof row.totalQuestions === 'number'
-              ? row.totalQuestions
-              : Number(row.total_questions ?? 0),
-          percentage:
-            typeof row.percentage === 'number'
-              ? row.percentage
-              : Number(row.percentage ?? 0),
-        }));
-
-        console.log(`[Leaderboard] Loaded ${normalized.length} rows for subject "${selectedSubject}"`, normalized);
-        setLeaderboardRows(normalized);
       } catch (err: any) {
         if (isCancelled) return;
         console.error('Failed to load leaderboard data', err);
@@ -319,10 +449,14 @@ const Benchmarks: React.FC = () => {
     return () => {
       isCancelled = true;
     };
-  }, [selectedSubject, evaluatorVersion, viewMode, appliedGradeLevel, appliedQuestionType, appliedMinTotalQuestions]);
+  }, [selectedSubject, evaluatorVersion, viewMode, gradeLevel, questionType, minTotalQuestions]);
 
   const subjectData = leaderboardRows
-    .filter(row => (row.subject || '').toLowerCase() === selectedSubject)
+    .filter(row => {
+      const rowSubject = (row.subject || '').toLowerCase();
+      const targetSubject = selectedSubject.toLowerCase();
+      return rowSubject === targetSubject;
+    })
     .filter(row => {
       // Filter out blocked experiments
       const isBlocked = isExperimentBlocked(row.model, row.actualModel);
@@ -335,7 +469,45 @@ const Benchmarks: React.FC = () => {
     `[Leaderboard] Filtered ${subjectData.length} rows for "${selectedSubject}" from ${leaderboardRows.length} total rows`
   );
   
-  const groupedByDifficulty = subjectData.reduce((acc, row) => {
+  // CONSOLIDATE data when All Grades is selected (gradeLevel is empty)
+  const consolidatedData = !gradeLevel ? (() => {
+    console.log('[Leaderboard] Consolidating data across all grades...');
+    // Group by experiment_tracker (model), difficulty
+    // When questionType filter is set, include it in grouping key to keep them separate
+    // When questionType is empty (all types), exclude it to combine MCQ + fill-in
+    const grouped = subjectData.reduce((acc, row) => {
+      const key = questionType 
+        ? `${row.model}|${row.difficulty}|${row.questionType}`
+        : `${row.model}|${row.difficulty}`;
+      if (!acc[key]) {
+        acc[key] = {
+          model: row.model,
+          actualModel: row.actualModel,
+          subject: row.subject,
+          difficulty: row.difficulty,
+          questionType: row.questionType,
+          questionsAboveThreshold: 0,
+          totalQuestions: 0,
+        };
+      }
+      acc[key].questionsAboveThreshold += row.questionsAboveThreshold;
+      acc[key].totalQuestions += row.totalQuestions;
+      return acc;
+    }, {} as Record<string, Omit<LeaderboardRow, 'percentage'>>);
+
+    // Calculate percentage for each consolidated row
+    const consolidated = Object.values(grouped).map(row => ({
+      ...row,
+      percentage: row.totalQuestions > 0 
+        ? Number((100 * row.questionsAboveThreshold / row.totalQuestions).toFixed(1))
+        : 0,
+    }));
+    
+    console.log(`[Leaderboard] Consolidated ${subjectData.length} rows into ${consolidated.length} unique experiments`);
+    return consolidated;
+  })() : subjectData;
+
+  const groupedByDifficulty = consolidatedData.reduce((acc, row) => {
     if (!acc[row.difficulty]) {
       acc[row.difficulty] = [];
     }
@@ -344,11 +516,11 @@ const Benchmarks: React.FC = () => {
   }, {} as Record<string, LeaderboardRow[]>);
 
   // Calculate comparison stats for InceptLabs vs Field
-  // Use view-mode-aware experiment configurations
-  const inceptLabsExperiments = getInceptLabsExperiments(viewMode);
-  const fieldExperiments = getFieldExperiments(viewMode);
-  const inceptLabsStats = calculateComparisonStats(subjectData, inceptLabsExperiments);
-  const fieldStats = calculateComparisonStats(subjectData, fieldExperiments);
+  // Use subject-aware and view-mode-aware experiment configurations
+  const inceptLabsExperiments = getInceptLabsExperiments(selectedSubject, viewMode);
+  const fieldExperiments = getFieldExperiments(selectedSubject, viewMode);
+  const inceptLabsStats = calculateComparisonStats(consolidatedData, inceptLabsExperiments);
+  const fieldStats = calculateComparisonStats(consolidatedData, fieldExperiments);
 
   const getPercentageColor = (percentage: number) => {
     if (percentage >= 90) return 'var(--success)';
@@ -389,7 +561,9 @@ const Benchmarks: React.FC = () => {
       inceptValue: number;
       fieldValue: number;
       maxValue?: number;
-    }> = ({ label, inceptValue, fieldValue, maxValue = 100 }) => {
+      inceptLabel?: string;
+      fieldLabel?: string;
+    }> = ({ label, inceptValue, fieldValue, maxValue = 100, inceptLabel = 'InceptLabs', fieldLabel = 'The Field' }) => {
       return (
         <div style={{ marginBottom: '24px' }}>
           <div style={{
@@ -417,7 +591,7 @@ const Benchmarks: React.FC = () => {
                 color: 'var(--primary)',
                 minWidth: '100px',
               }}>
-                InceptLabs
+                {inceptLabel}
               </div>
               <div style={{
                 flex: 1,
@@ -468,7 +642,7 @@ const Benchmarks: React.FC = () => {
                 color: 'rgb(34, 197, 94)',
                 minWidth: '100px',
               }}>
-                The Field
+                {fieldLabel}
               </div>
               <div style={{
                 flex: 1,
@@ -508,6 +682,164 @@ const Benchmarks: React.FC = () => {
       );
     };
 
+    const getOverallForTracker = (experimentTracker: string) => {
+      const rows = subjectData.filter(r => r.model === experimentTracker);
+      const totalQuestionsAboveThreshold = rows.reduce((sum, r) => sum + r.questionsAboveThreshold, 0);
+      const totalQuestions = rows.reduce((sum, r) => sum + r.totalQuestions, 0);
+      const overallPercentage = totalQuestions > 0 ? (totalQuestionsAboveThreshold / totalQuestions) * 100 : 0;
+      return { overallPercentage, totalQuestionsAboveThreshold, totalQuestions };
+    };
+
+    const OverallMultiBarChart: React.FC<{
+      title: string;
+      experiments: Array<[string, string?]>;
+      maxValue?: number;
+    }> = ({ title, experiments, maxValue = 100 }) => {
+      const inceptSet = new Set(Object.values(inceptLabsExperiments));
+      const fieldSet = new Set(Object.values(fieldExperiments));
+
+      // Drop duplicates/empties and only show experiments that have data
+      const seen = new Set<string>();
+      const items = experiments
+        .filter(([tracker]) => typeof tracker === 'string' && tracker.trim().length > 0)
+        .filter(([tracker]) => (seen.has(tracker) ? false : (seen.add(tracker), true)))
+        .map(([tracker, rename]) => {
+          const label = (rename ?? '').trim() || tracker;
+          return { tracker, label, ...getOverallForTracker(tracker) };
+        })
+        .filter((x) => x.totalQuestions > 0)
+        .sort((a, b) => {
+          // Descending by overall % (then stable-ish by label)
+          if (b.overallPercentage !== a.overallPercentage) return b.overallPercentage - a.overallPercentage;
+          return a.label.localeCompare(b.label);
+        });
+
+      if (items.length === 0) {
+        return (
+          <div style={{
+            background: 'var(--surface)',
+            border: '1px solid var(--border)',
+            borderRadius: '12px',
+            padding: '18px 20px',
+            marginTop: '24px',
+            color: 'var(--text-secondary)',
+            fontSize: '14px',
+            textAlign: 'center',
+          }}>
+            No data available for configured overall experiments.
+          </div>
+        );
+      }
+
+      return (
+        <div style={{
+          marginTop: '24px',
+          background: 'var(--surface)',
+          border: '1px solid var(--border)',
+          borderRadius: '12px',
+          overflow: 'hidden',
+        }}>
+          <div style={{
+            padding: '16px 20px',
+            borderBottom: '1px solid var(--border)',
+            background: 'rgba(255, 255, 255, 0.02)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '12px',
+            flexWrap: 'wrap',
+          }}>
+            <div style={{
+              fontSize: '14px',
+              fontWeight: '700',
+              color: 'var(--text)',
+            }}>
+              {title}
+            </div>
+            <div style={{
+              fontSize: '12px',
+              color: 'var(--text-secondary)',
+              fontFamily: 'monospace',
+            }}>
+              {items.length} experiments
+            </div>
+          </div>
+
+          <div style={{ padding: '18px 20px' }}>
+            {items.map((item) => {
+              const isIncept = inceptSet.has(item.tracker);
+              const isField = fieldSet.has(item.tracker);
+              const barColor = isIncept
+                ? 'linear-gradient(90deg, #9e7fff 0%, #8b5cf6 100%)'
+                : isField
+                  ? 'linear-gradient(90deg, #22c55e 0%, #16a34a 100%)'
+                  : 'linear-gradient(90deg, #64748b 0%, #475569 100%)';
+
+              return (
+                <div key={item.tracker} style={{ marginBottom: '14px' }}>
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'baseline',
+                    justifyContent: 'space-between',
+                    gap: '12px',
+                    marginBottom: '6px',
+                  }}>
+                    <div style={{
+                      fontSize: '12px',
+                      fontWeight: '600',
+                      color: 'var(--text)',
+                      wordBreak: 'break-word',
+                      lineHeight: 1.3,
+                    }}>
+                      {item.label}
+                      {item.label !== item.tracker && (
+                        <span style={{
+                          marginLeft: '8px',
+                          fontSize: '11px',
+                          fontWeight: '500',
+                          color: 'var(--text-secondary)',
+                          fontFamily: 'monospace',
+                        }}>
+                          ({item.tracker})
+                        </span>
+                      )}
+                    </div>
+                    <div style={{
+                      fontSize: '12px',
+                      color: 'var(--text-secondary)',
+                      fontFamily: 'monospace',
+                      whiteSpace: 'nowrap',
+                    }}>
+                      {item.overallPercentage.toFixed(1)}% ({item.totalQuestionsAboveThreshold}/{item.totalQuestions})
+                    </div>
+                  </div>
+
+                  <div style={{
+                    height: '30px',
+                    background: 'rgba(255, 255, 255, 0.05)',
+                    borderRadius: '8px',
+                    position: 'relative',
+                    overflow: 'hidden',
+                  }}>
+                    <div style={{
+                      position: 'absolute',
+                      left: 0,
+                      top: 0,
+                      bottom: 0,
+                      width: `${Math.min(100, (item.overallPercentage / maxValue) * 100)}%`,
+                      background: barColor,
+                      borderRadius: '8px',
+                      transition: 'width 0.3s ease',
+                    }} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      );
+    };
+
     return (
       <div style={{ marginBottom: '32px' }}>
         {/* Overall Comparison Card */}
@@ -518,32 +850,7 @@ const Benchmarks: React.FC = () => {
           overflow: 'hidden',
           marginBottom: '24px',
         }}>
-          {/* Header */}
-          <div style={{
-            padding: '20px 24px',
-            borderBottom: '1px solid var(--border)',
-            background: 'rgba(0, 0, 0, 0.2)',
-          }}>
-            <h2 style={{
-              fontSize: '18px',
-              fontWeight: '700',
-              color: 'var(--text)',
-              margin: 0,
-              display: 'flex',
-              alignItems: 'center',
-              gap: '12px',
-            }}>
-              <TrendingUp size={20} />
-              InceptLabs vs Field - Overall Performance
-            </h2>
-            <p style={{
-              fontSize: '12px',
-              color: 'var(--text-secondary)',
-              margin: '4px 0 0 32px',
-            }}>
-              Aggregated metrics across all difficulty levels
-            </p>
-          </div>
+          
 
           {/* Overall Metrics Row */}
           <div style={{
@@ -812,6 +1119,18 @@ const Benchmarks: React.FC = () => {
             );
           })}
         </div>
+
+        <OverallMultiBarChart
+          title="Overall performance"
+          experiments={
+            evaluatorVersion === '2.1.0'
+              ? // Auto-discover all experiments from loaded data (2.1.0+)
+                Array.from(new Set(consolidatedData.map(row => row.model)))
+                  .map(tracker => [tracker, tracker] as [string, string])
+              : // Use manually configured experiments (pre-2.1.0)
+                getOverallComparisonExperimentTuples(selectedSubject, viewMode)
+          }
+        />
       </div>
     );
   };
@@ -1097,10 +1416,11 @@ const Benchmarks: React.FC = () => {
                 onClick={() => {
                   // Navigate to evaluations page with filters pre-filled
                   const params = new URLSearchParams({
-                    model: encodeURIComponent(row.model),
+                    model: row.model, // URLSearchParams handles encoding
                     subject: selectedSubject,
-                    ...(appliedGradeLevel && { grade_level: appliedGradeLevel }),
-                    ...(appliedQuestionType && { question_type: appliedQuestionType }),
+                    evaluator_version: evaluatorVersion,
+                    ...(gradeLevel && { grade_level: gradeLevel }),
+                    ...(questionType && { question_type: questionType }),
                   });
                   navigate(`/evaluations?${params.toString()}`);
                 }}
@@ -1188,6 +1508,7 @@ const Benchmarks: React.FC = () => {
                       const params = new URLSearchParams({
                         experiment_tracker: row.model,
                         subject: selectedSubject,
+                        evaluator_version: evaluatorVersion,
                       });
                       navigate(`/look-at-data?${params.toString()}`);
                     }}
@@ -1225,6 +1546,7 @@ const Benchmarks: React.FC = () => {
                       const params = new URLSearchParams({
                         experiment_tracker: row.model,
                         subject: selectedSubject,
+                        evaluator_version: evaluatorVersion,
                         ...(appliedGradeLevel && { grade_level: appliedGradeLevel }),
                         ...(appliedQuestionType && { question_type: appliedQuestionType }),
                       });
@@ -1245,6 +1567,7 @@ const Benchmarks: React.FC = () => {
                               subject: selectedSubject,
                               grade_level: appliedGradeLevel || '',
                               question_type: appliedQuestionType || '',
+                              evaluator_version: evaluatorVersion,
                             },
                             reportData || [],
                             summaryData || null,
@@ -1448,12 +1771,13 @@ const Benchmarks: React.FC = () => {
                   e.currentTarget.style.borderColor = 'var(--border)';
                 }}
               >
+                <option value="2.1.0">v2.1.0</option>
                 <option value="2.0.0">v2.0.0</option>
                 <option value="1.5.4">v1.5.4</option>
               </select>
             </div>
 
-            {/* View Mode Selector - Only show for 2.0.0 */}
+            {/* View Mode Selector - Only show for 2.0.0 (2.1.0 always uses 'all') */}
             {evaluatorVersion === '2.0.0' && (
               <>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -1511,6 +1835,25 @@ const Benchmarks: React.FC = () => {
                 )}
               </>
             )}
+            
+            {/* Info for 2.1.0: Always shows all data */}
+            {evaluatorVersion === '2.1.0' && (
+              <div style={{
+                padding: '6px 12px',
+                background: 'rgba(59, 130, 246, 0.1)',
+                border: '1px solid rgba(59, 130, 246, 0.3)',
+                borderRadius: '6px',
+                fontSize: '12px',
+                fontWeight: '500',
+                color: '#3b82f6',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+              }}>
+                <AlertCircle size={14} />
+                All Data
+              </div>
+            )}
           </div>
         </div>
 
@@ -1518,14 +1861,110 @@ const Benchmarks: React.FC = () => {
         <div style={{ display: 'flex', gap: '8px', borderBottom: '1px solid var(--border)' }}>
           <button
             onClick={() => {
+              setSelectedSubject('language');
+              // Reset to Language defaults
+              setGradeLevel('');
+              setQuestionType('mcq');
+              setMinTotalQuestions(50);
+            }}
+            style={{
+              padding: '12px 24px',
+              background: 'transparent',
+              border: 'none',
+              borderBottom: selectedSubject === 'language' ? '2px solid var(--primary)' : '2px solid transparent',
+              color: selectedSubject === 'language' ? 'var(--primary)' : 'var(--text-secondary)',
+              fontSize: '14px',
+              fontWeight: '600',
+              cursor: 'pointer',
+              transition: 'all 0.2s ease',
+            }}
+            onMouseEnter={(e) => {
+              if (selectedSubject !== 'language') {
+                e.currentTarget.style.color = 'var(--text)';
+              }
+            }}
+            onMouseLeave={(e) => {
+              if (selectedSubject !== 'language') {
+                e.currentTarget.style.color = 'var(--text-secondary)';
+              }
+            }}
+          >
+            Language
+          </button>
+          <button
+            onClick={() => {
+              setSelectedSubject('reading');
+              // Reset to Reading defaults
+              setGradeLevel('');
+              setQuestionType('mcq');
+              setMinTotalQuestions(50);
+            }}
+            style={{
+              padding: '12px 24px',
+              background: 'transparent',
+              border: 'none',
+              borderBottom: selectedSubject === 'reading' ? '2px solid var(--primary)' : '2px solid transparent',
+              color: selectedSubject === 'reading' ? 'var(--primary)' : 'var(--text-secondary)',
+              fontSize: '14px',
+              fontWeight: '600',
+              cursor: 'pointer',
+              transition: 'all 0.2s ease',
+            }}
+            onMouseEnter={(e) => {
+              if (selectedSubject !== 'reading') {
+                e.currentTarget.style.color = 'var(--text)';
+              }
+            }}
+            onMouseLeave={(e) => {
+              if (selectedSubject !== 'reading') {
+                e.currentTarget.style.color = 'var(--text-secondary)';
+              }
+            }}
+          >
+            Reading
+          </button>
+          {/* (R+L)-ELA Tab - Only visible for evaluator 2.1.0 */}
+          {evaluatorVersion === '2.1.0' && (
+            <button
+              onClick={() => {
+                setSelectedSubject('(r+l)-ela');
+                // Reset to defaults
+                setGradeLevel('');
+                setQuestionType('mcq');
+                setMinTotalQuestions(50);
+              }}
+              style={{
+                padding: '12px 24px',
+                background: 'transparent',
+                border: 'none',
+                borderBottom: selectedSubject === '(r+l)-ela' ? '2px solid var(--primary)' : '2px solid transparent',
+                color: selectedSubject === '(r+l)-ela' ? 'var(--primary)' : 'var(--text-secondary)',
+                fontSize: '14px',
+                fontWeight: '600',
+                cursor: 'pointer',
+                transition: 'all 0.2s ease',
+              }}
+              onMouseEnter={(e) => {
+                if (selectedSubject !== '(r+l)-ela') {
+                  e.currentTarget.style.color = 'var(--text)';
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (selectedSubject !== '(r+l)-ela') {
+                  e.currentTarget.style.color = 'var(--text-secondary)';
+                }
+              }}
+            >
+              (R+L)-ELA
+            </button>
+          )}
+          <button
+            onClick={() => {
               setSelectedSubject('ela');
               // Reset to ELA defaults (60 questions minimum)
               setGradeLevel('');
-              setQuestionType('');
+              setQuestionType('mcq');
               setMinTotalQuestions(60);
-              setAppliedGradeLevel('');
-              setAppliedQuestionType('');
-              setAppliedMinTotalQuestions(60);
             }}
             style={{
               padding: '12px 24px',
@@ -1558,9 +1997,6 @@ const Benchmarks: React.FC = () => {
               setGradeLevel('3');
               setQuestionType('mcq');
               setMinTotalQuestions(120);
-              setAppliedGradeLevel('3');
-              setAppliedQuestionType('mcq');
-              setAppliedMinTotalQuestions(120);
             }}
             style={{
               padding: '12px 24px',
@@ -1588,130 +2024,34 @@ const Benchmarks: React.FC = () => {
           </button>
         </div>
 
-        {/* Filters Section */}
+        {/* Filters Section - All in One Line */}
         <div style={{
           marginTop: '24px',
           background: 'var(--surface)',
           border: '1px solid var(--border)',
           borderRadius: '12px',
-          overflow: 'hidden',
+          padding: '16px 20px',
+          display: 'flex',
+          gap: '12px',
+          flexWrap: 'wrap',
+          alignItems: 'center',
         }}>
-          {/* Filters Header */}
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-          }}>
-            <button
-              onClick={() => setShowFilters(!showFilters)}
-              style={{
-                flex: 1,
-                padding: '16px 20px',
-                background: 'transparent',
-                border: 'none',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                cursor: 'pointer',
-                transition: 'background 0.2s ease',
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.background = 'var(--hover-bg)';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = 'transparent';
-              }}
-            >
-              <div style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '12px',
-              }}>
-                <span style={{
-                  fontSize: '14px',
-                  fontWeight: '600',
-                  color: 'var(--text)',
-                }}>
-                  Filters
-                </span>
-                <span style={{
-                  fontSize: '12px',
-                  color: 'var(--text-secondary)',
-                }}>
-                  {appliedGradeLevel && `Grade ${appliedGradeLevel}`}
-                  {appliedGradeLevel && (appliedQuestionType || appliedMinTotalQuestions) && ' • '}
-                  {appliedQuestionType && appliedQuestionType.toUpperCase()}
-                  {appliedQuestionType && appliedMinTotalQuestions && ' • '}
-                  {appliedMinTotalQuestions && `Min ${appliedMinTotalQuestions} questions`}
-                </span>
-              </div>
-              <div style={{ color: 'var(--text-secondary)' }}>
-                {showFilters ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
-              </div>
-            </button>
-            
-            {/* Top Performers Button */}
-            <button
-              onClick={() => setTopPerformersModalOpen(true)}
-              style={{
-                padding: '8px 20px',
-                marginRight: '16px',
-                background: 'linear-gradient(135deg, var(--primary) 0%, #8b5cf6 100%)',
-                border: 'none',
-                borderRadius: '8px',
-                color: 'white',
-                fontSize: '14px',
-                fontWeight: '600',
-                cursor: 'pointer',
-                transition: 'all 0.2s ease',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                boxShadow: '0 2px 8px rgba(158, 127, 255, 0.3)',
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.transform = 'translateY(-2px)';
-                e.currentTarget.style.boxShadow = '0 4px 16px rgba(158, 127, 255, 0.4)';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.transform = 'translateY(0)';
-                e.currentTarget.style.boxShadow = '0 2px 8px rgba(158, 127, 255, 0.3)';
-              }}
-            >
-              <TrendingUp size={16} />
-              Top Performers
-            </button>
-          </div>
-
-          {/* Filters Content */}
-          {showFilters && (
-            <div style={{
-              padding: '0 20px 20px 20px',
-              borderTop: '1px solid var(--border)',
-              display: 'flex',
-              gap: '16px',
-              alignItems: 'flex-end',
-              flexWrap: 'wrap',
-            }}>
-              <div style={{ height: '16px', width: '100%' }}></div>
-              {/* Grade Level Filter */}
-          <div style={{ minWidth: '150px' }}>
+          {/* Grade Level Dropdown */}
+          <div style={{ minWidth: '140px', flex: '0 0 auto' }}>
             <label style={{
               display: 'block',
-              fontSize: '12px',
+              fontSize: '11px',
               fontWeight: '600',
               color: 'var(--text-secondary)',
-              marginBottom: '8px',
+              marginBottom: '6px',
               textTransform: 'uppercase',
               letterSpacing: '0.5px',
             }}>
               Grade Level
             </label>
-            <input
-              type="text"
+            <select
               value={gradeLevel}
               onChange={(e) => setGradeLevel(e.target.value)}
-              placeholder="e.g., 3"
               style={{
                 width: '100%',
                 padding: '8px 12px',
@@ -1721,6 +2061,7 @@ const Benchmarks: React.FC = () => {
                 borderRadius: '6px',
                 color: 'var(--text)',
                 outline: 'none',
+                cursor: 'pointer',
               }}
               onFocus={(e) => {
                 e.currentTarget.style.borderColor = 'var(--primary)';
@@ -1728,17 +2069,25 @@ const Benchmarks: React.FC = () => {
               onBlur={(e) => {
                 e.currentTarget.style.borderColor = 'var(--border)';
               }}
-            />
+            >
+              <option value="">All Grades</option>
+              <option value="3">Grade 3</option>
+              <option value="4">Grade 4</option>
+              <option value="5">Grade 5</option>
+              <option value="6">Grade 6</option>
+              <option value="7">Grade 7</option>
+              <option value="8">Grade 8</option>
+            </select>
           </div>
 
-          {/* Question Type Filter */}
-          <div style={{ minWidth: '150px' }}>
+          {/* Question Type Dropdown */}
+          <div style={{ minWidth: '140px', flex: '0 0 auto' }}>
             <label style={{
               display: 'block',
-              fontSize: '12px',
+              fontSize: '11px',
               fontWeight: '600',
               color: 'var(--text-secondary)',
-              marginBottom: '8px',
+              marginBottom: '6px',
               textTransform: 'uppercase',
               letterSpacing: '0.5px',
             }}>
@@ -1771,18 +2120,18 @@ const Benchmarks: React.FC = () => {
             </select>
           </div>
 
-          {/* Minimum Total Questions Filter */}
-          <div style={{ minWidth: '180px' }}>
+          {/* Minimum Total Questions Input */}
+          <div style={{ minWidth: '160px', flex: '0 0 auto' }}>
             <label style={{
               display: 'block',
-              fontSize: '12px',
+              fontSize: '11px',
               fontWeight: '600',
               color: 'var(--text-secondary)',
-              marginBottom: '8px',
+              marginBottom: '6px',
               textTransform: 'uppercase',
               letterSpacing: '0.5px',
             }}>
-              Min Total Questions
+              Min Questions
             </label>
             <input
               type="number"
@@ -1813,25 +2162,23 @@ const Benchmarks: React.FC = () => {
           <button
             onClick={() => {
               // Reset based on selected subject
-              if (selectedSubject === 'ela') {
+              if (selectedSubject === 'language') {
+                setGradeLevel('');
+                setQuestionType('');
+                setMinTotalQuestions(50);
+              } else if (selectedSubject === 'ela') {
                 setGradeLevel('');
                 setQuestionType('');
                 setMinTotalQuestions(60);
-                setAppliedGradeLevel('');
-                setAppliedQuestionType('');
-                setAppliedMinTotalQuestions(60);
               } else {
                 setGradeLevel('3');
                 setQuestionType('mcq');
                 setMinTotalQuestions(120);
-                setAppliedGradeLevel('3');
-                setAppliedQuestionType('mcq');
-                setAppliedMinTotalQuestions(120);
               }
             }}
             style={{
               padding: '8px 16px',
-              fontSize: '14px',
+              fontSize: '13px',
               fontWeight: '500',
               background: 'transparent',
               border: '1px solid var(--border)',
@@ -1839,6 +2186,8 @@ const Benchmarks: React.FC = () => {
               color: 'var(--text-secondary)',
               cursor: 'pointer',
               transition: 'all 0.2s ease',
+              alignSelf: 'flex-end',
+              marginBottom: '2px',
             }}
             onMouseEnter={(e) => {
               e.currentTarget.style.background = 'var(--hover-bg)';
@@ -1849,51 +2198,49 @@ const Benchmarks: React.FC = () => {
               e.currentTarget.style.color = 'var(--text-secondary)';
             }}
           >
-            Reset Filters
+            Reset
           </button>
 
-          {/* Apply Filters Button */}
+          {/* Spacer to push Top Performers to the right */}
+          <div style={{ flex: '1 1 auto' }}></div>
+
+          {/* Top Performers Button */}
           <button
-            onClick={applyFilters}
-            disabled={!hasUnappliedChanges}
+            onClick={() => setTopPerformersModalOpen(true)}
             style={{
-              padding: '8px 24px',
-              fontSize: '14px',
-              fontWeight: '600',
-              background: hasUnappliedChanges
-                ? 'linear-gradient(135deg, var(--success) 0%, #059669 100%)'
-                : 'var(--surface)',
-              border: '1px solid var(--border)',
+              padding: '8px 16px',
+              background: 'linear-gradient(135deg, var(--primary) 0%, #8b5cf6 100%)',
+              border: 'none',
               borderRadius: '6px',
-              color: hasUnappliedChanges ? '#ffffff' : 'var(--text-secondary)',
-              cursor: hasUnappliedChanges ? 'pointer' : 'not-allowed',
+              color: 'white',
+              fontSize: '13px',
+              fontWeight: '600',
+              cursor: 'pointer',
               transition: 'all 0.2s ease',
               display: 'flex',
               alignItems: 'center',
-              gap: '8px',
-              opacity: hasUnappliedChanges ? 1 : 0.5,
+              gap: '6px',
+              boxShadow: '0 2px 8px rgba(158, 127, 255, 0.3)',
+              alignSelf: 'flex-end',
+              marginBottom: '2px',
             }}
             onMouseEnter={(e) => {
-              if (hasUnappliedChanges) {
-                e.currentTarget.style.transform = 'scale(1.05)';
-                e.currentTarget.style.boxShadow = '0 4px 16px rgba(16, 185, 129, 0.3)';
-              }
+              e.currentTarget.style.transform = 'translateY(-2px)';
+              e.currentTarget.style.boxShadow = '0 4px 16px rgba(158, 127, 255, 0.4)';
             }}
             onMouseLeave={(e) => {
-              e.currentTarget.style.transform = 'scale(1)';
-              e.currentTarget.style.boxShadow = 'none';
+              e.currentTarget.style.transform = 'translateY(0)';
+              e.currentTarget.style.boxShadow = '0 2px 8px rgba(158, 127, 255, 0.3)';
             }}
           >
-            <Filter size={16} />
-            Apply Filters
+            <TrendingUp size={14} />
+            Top Performers
           </button>
-            </div>
-          )}
         </div>
       </div>
 
-      {/* InceptLabs vs Field Comparison */}
-      <ComparisonSection />
+      {/* InceptLabs vs Field Comparison (hidden for (r+l)-ela) */}
+      {selectedSubject !== '(r+l)-ela' && <ComparisonSection />}
 
       {/* Leaderboard - Vertical Stack */}
       <div style={{
@@ -2107,10 +2454,10 @@ const Benchmarks: React.FC = () => {
                       onClick={() => {
                         setDifficultyModalOpen(false);
                         const params = new URLSearchParams({
-                          model: encodeURIComponent(row.model),
+                          model: row.model, // URLSearchParams handles encoding
                           subject: selectedSubject,
-                          ...(appliedGradeLevel && { grade_level: appliedGradeLevel }),
-                          ...(appliedQuestionType && { question_type: appliedQuestionType }),
+                          ...(gradeLevel && { grade_level: gradeLevel }),
+                          ...(questionType && { question_type: questionType }),
                         });
                         navigate(`/evaluations?${params.toString()}`);
                       }}
